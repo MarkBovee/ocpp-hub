@@ -2,29 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-from types import ModuleType
-
 import pytest
 
-TOOL = Path(__file__).resolve().parents[1] / "tools" / "deploy_ha.py"
+from tests.tool_loader import load_tool
 
-
-# Intent: load the deploy tool by path, because tools/ is not a package.
-# Why: the tests exercise the real functions, not a copy.
-def _load_tool() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("deploy_ha", TOOL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # dataclasses looks the module up in sys.modules while it builds a class, so register it first.
-    sys.modules["deploy_ha"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-deploy = _load_tool()
+deploy = load_tool("deploy_ha")
 
 
 # Intent: .env parsing ignores comments and blank lines and strips quotes.

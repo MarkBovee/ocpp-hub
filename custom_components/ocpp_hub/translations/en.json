@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "OCPP Hub",
-        "description": "Set the port your charger connects to. Point the charger's OCPP profile at ws://<Home Assistant IP>:<port>.",
+        "description": "Set the port your charger connects to. In the charger's OCPP profile, use ws:// followed by the address of this Home Assistant, a colon and this port.",
         "data": {
           "port": "Port"
         },

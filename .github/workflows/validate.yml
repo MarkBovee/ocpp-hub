@@ -11,6 +11,8 @@ permissions: {}
 
 jobs:
   validate-hacs:
+    # The HACS action refuses private repositories; the release gate drops this check while the repository is private.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - name: HACS validation

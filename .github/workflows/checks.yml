@@ -47,5 +47,6 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}"
           else
-            git diff --check HEAD^ HEAD
+            base=$(git rev-parse --verify -q HEAD^ || git hash-object -t tree /dev/null)
+            git diff --check "$base" HEAD
           fi
