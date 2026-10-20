@@ -236,13 +236,17 @@ class MirrorLink:
         _LOGGER.log(logging.DEBUG if self._failing else logging.WARNING, "Mirror link of %s: %s", self.cp_id, text)
         self._failing = True
 
+    # A real answer from the vendor ends a streak of failures. A connection that is opened and then refused at the boot
+    # does not, so a vendor that keeps refusing is warned about once and not at every attempt.
+    def _end_failure_streak(self) -> None:
+        if self._failing:
+            _LOGGER.info("Mirror link of %s delivers to the vendor backend again", self.cp_id)
+            self._failing = False
+
     # Open the vendor connection, prepare the queue, and run until the connection or the link ends.
     async def _serve_once(self) -> None:
         connection = await self._open()
         self._connected = True
-        if self._failing:
-            _LOGGER.info("Mirror link of %s is back on the vendor backend", self.cp_id)
-        self._failing = False
         _LOGGER.info("Mirror link of %s connected to the vendor backend", self.cp_id)
         try:
             self._prepare_session()
@@ -375,6 +379,7 @@ class MirrorLink:
                 )
             self._accept_answer(item, await self._request(connection, item, translation.payload))
             self._delivered_on_this_connection = True
+            self._end_failure_streak()
         self._in_flight = None
         if item.action == ACTION_STOP and is_integer(item.payload.get("transactionId")):
             self._transactions.forget(item.payload["transactionId"])
