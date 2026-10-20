@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from ocpp_hub_core.mirror_commands import TriggerRequest, answer_vendor_call
-from ocpp_hub_core.mirror_model import MirrorSettings
+from ocpp_hub_core.mirror_model import MirrorSettings, MirrorSettingsError
 from ocpp_hub_core.mirror_queue import Outgoing, OutgoingQueue
 from ocpp_hub_core.mirror_rewrite import StartPairing, translate_for_vendor
 from ocpp_hub_core.txid_map import TransactionIdMap
@@ -200,25 +200,27 @@ def test_trigger_message_answers(payload: dict[str, Any], can: bool, expected: o
     assert (answer.trigger is not None) == (expected == {"status": "Accepted"})
 
 
-# Intent: bad settings are refused when they are created.
+# Intent: bad settings are refused when they are created, each with a code a form can show a message for.
 # Why: a typo in the vendor URL or half a credential pair must show up as an error, not as a retry loop forever.
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "code"),
     [
-        {"url": "http://vendor.example/ocpp"},
-        {"url": "ws://"},
-        {"url": "wss://user:secret@vendor.example/ocpp"},
-        {"user": "only-a-user"},
-        {"password": "only-a-password"},
-        {"commands": "forward"},
-        {"max_queue": 0},
-        {"reply_timeout_s": 0.0},
-        {"backoff_min_s": 5.0, "backoff_max_s": 1.0},
+        ({"url": "http://vendor.example/ocpp"}, "invalid_url"),
+        ({"url": "ws://"}, "invalid_url"),
+        ({"url": "wss://user:secret@vendor.example/ocpp"}, "credentials_in_url"),
+        ({"user": "only-a-user"}, "credentials_incomplete"),
+        ({"password": "only-a-password"}, "credentials_incomplete"),
+        ({"commands": "forward"}, "invalid_settings"),
+        ({"max_queue": 0}, "invalid_settings"),
+        ({"reply_timeout_s": 0.0}, "invalid_settings"),
+        ({"backoff_min_s": 5.0, "backoff_max_s": 1.0}, "invalid_settings"),
     ],
 )
-def test_invalid_settings_are_refused(overrides: dict[str, Any]) -> None:
-    with pytest.raises(ValueError):
+def test_invalid_settings_are_refused(overrides: dict[str, Any], code: str) -> None:
+    with pytest.raises(MirrorSettingsError) as refused:
         MirrorSettings(**{"url": "wss://vendor.example/ocpp", **overrides})
+
+    assert refused.value.code == code and isinstance(refused.value, ValueError)
 
 
 # Intent: credentials give an auth header and never show up in the printed settings.

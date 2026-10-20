@@ -12,6 +12,15 @@ from .frames import basic_auth_header
 COMMANDS_REJECT = "reject"
 
 
+class MirrorSettingsError(ValueError):
+    """Settings that cannot work. The code names the problem so a form can show a translated message for it."""
+
+    # Keep a short machine-readable code next to the human message.
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True, slots=True)
 class MirrorSettings:
     """How the mirror reaches the vendor backend and how patient it is."""
@@ -33,19 +42,25 @@ class MirrorSettings:
     def __post_init__(self) -> None:
         parts = urlsplit(self.url)
         if parts.scheme not in ("ws", "wss") or not parts.hostname:
-            raise ValueError("the vendor URL must start with ws:// or wss:// and name a host")
+            raise MirrorSettingsError("invalid_url", "the vendor URL must start with ws:// or wss:// and name a host")
         if parts.username is not None or parts.password is not None:
-            raise ValueError("the vendor URL must not contain credentials; use the user and password settings")
+            raise MirrorSettingsError(
+                "credentials_in_url", "the vendor URL must not contain credentials; use the user and password settings"
+            )
         if bool(self.user) != bool(self.password):
-            raise ValueError("set both the vendor user and password, or neither")
+            raise MirrorSettingsError("credentials_incomplete", "set both the vendor user and password, or neither")
         if self.commands != COMMANDS_REJECT:
-            raise ValueError(f"unsupported command policy {self.commands!r}; only {COMMANDS_REJECT!r} exists")
+            raise MirrorSettingsError(
+                "invalid_settings", f"unsupported command policy {self.commands!r}; only {COMMANDS_REJECT!r} exists"
+            )
         if self.max_queue < 1 or self.fallback_heartbeat_s < 1:
-            raise ValueError("the queue size and the fallback heartbeat interval must be at least 1")
+            raise MirrorSettingsError(
+                "invalid_settings", "the queue size and the fallback heartbeat must be at least 1"
+            )
         if min(self.reply_timeout_s, self.connect_timeout_s, self.backoff_min_s, self.backoff_max_s) <= 0:
-            raise ValueError("timeouts and backoff delays must be positive")
+            raise MirrorSettingsError("invalid_settings", "timeouts and backoff delays must be positive")
         if self.backoff_min_s > self.backoff_max_s:
-            raise ValueError("the minimum backoff delay cannot exceed the maximum")
+            raise MirrorSettingsError("invalid_settings", "the minimum backoff delay cannot exceed the maximum")
 
     @property
     def use_tls(self) -> bool:
