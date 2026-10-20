@@ -55,6 +55,21 @@ def _fetch_check_runs(repo: str, sha: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
+# Intent: choose the checks a release must pass: the HACS check only exists for public repositories.
+# Why: the HACS action refuses a private repository, so waiting for it there would block every release forever.
+def required_checks(private: bool) -> tuple[str, ...]:
+    return tuple(name for name in REQUIRED_CHECKS if not (private and name == "validate-hacs"))
+
+
+# Intent: ask GitHub whether the repository is private.
+# Why: the required checks depend on it, and the gate must not guess.
+def _is_private(repo: str) -> bool:
+    out = subprocess.run(
+        ["gh", "api", f"repos/{repo}", "--jq", ".private"], check=True, capture_output=True, text=True
+    ).stdout
+    return out.strip() == "true"
+
+
 # Intent: poll the check runs until the gate passes, fails or the timeout ends.
 # Why: hassfest and HACS run in other workflows and can finish after the tag push; sleep and clock are replaceable.
 def wait_for_gate(
@@ -63,10 +78,11 @@ def wait_for_gate(
     interval: float = 20.0,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    required: Sequence[str] = REQUIRED_CHECKS,
 ) -> tuple[bool, str]:
     deadline = clock() + timeout
     while True:
-        state, detail = evaluate(fetch())
+        state, detail = evaluate(fetch(), required)
         if state == "pass":
             return True, detail
         if state == "fail":
@@ -84,7 +100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("sha")
     parser.add_argument("--timeout", type=float, default=900.0)
     args = parser.parse_args(argv)
-    ok, detail = wait_for_gate(lambda: _fetch_check_runs(args.repo, args.sha), args.timeout)
+    required = required_checks(_is_private(args.repo))
+    ok, detail = wait_for_gate(lambda: _fetch_check_runs(args.repo, args.sha), args.timeout, required=required)
     print(("RELEASE GATE OK: " if ok else "RELEASE GATE FAILED: ") + detail, file=sys.stderr if not ok else sys.stdout)
     return 0 if ok else 1
 

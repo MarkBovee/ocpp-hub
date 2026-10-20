@@ -6,6 +6,7 @@
 Rules checked for ``strings.json`` and every ``translations/*.json``:
 
 - the file is valid JSON;
+- no string contains HTML-like text such as ``<port>``;
 - an entry under ``issues`` has a ``title`` and either a ``description`` (not fixable) or a ``fix_flow`` (fixable),
   never both (hassfest: "two or more values in the same group of exclusion 'fixable'").
 """
@@ -13,6 +14,7 @@ Rules checked for ``strings.json`` and every ``translations/*.json``:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,6 +48,18 @@ def issue_problems(data: dict[str, object]) -> list[str]:
     return problems
 
 
+# Intent: find strings that look like HTML, such as ``<port>`` or ``<b>``, anywhere in a parsed translation file.
+# Why: hassfest rejects them ("the string should not contain HTML"), and angle-bracket placeholders look like tags.
+def html_problems(node: object, path: str = "") -> list[str]:
+    problems: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            problems += html_problems(value, f"{path}.{key}" if path else str(key))
+    elif isinstance(node, str) and re.search(r"<[A-Za-z/!][^>]*>", node):
+        problems.append(f"{path} contains HTML-like text: {node[:60]!r}")
+    return problems
+
+
 # Intent: check every translation file and print the problems found.
 # Why: one command gives CI parity for the translation rules.
 def main() -> int:
@@ -57,7 +71,7 @@ def main() -> int:
             print(f"{path.name}: invalid JSON: {error}")
             failed = True
             continue
-        for problem in issue_problems(data):
+        for problem in [*issue_problems(data), *html_problems(data)]:
             print(f"{path.name}: {problem}")
             failed = True
     print("translations: FAILED" if failed else "translations: ok")
