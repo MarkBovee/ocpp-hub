@@ -2,18 +2,39 @@
 
 A Home Assistant integration that acts as the local OCPP 1.6 backend of your EV charger, and can pass a read-only copy of everything the charger says on to the manufacturer's own backend.
 
-> **Status: early.** Version 0.1.0 is a scaffold. Setting it up stores a port and nothing listens yet. The sections below describe where it is heading, and the changelog says what each release really does.
+> **Status: early.** The OCPP server, the entities and the vendor mirror are built and tested against a fake charger and a fake vendor backend. None of it has run against a real charger and a real vendor backend yet, and nothing writes to a charger: there are no limit or start/stop controls. The changelog says what each release really does.
 
 ## Why
 
 A charger talks to one OCPP backend at a time. Point it at Home Assistant and the manufacturer's app goes dark; leave it on the manufacturer's cloud and Home Assistant can only watch. OCPP Hub is the backend that Home Assistant controls, and it keeps the manufacturer's backend informed on the side, so charging sessions still show up in the vendor app while load balancing and price-based charging run locally.
 
-## What it will do
+## What it does
 
-- Accept the charger on a port you choose and expose its status, power, per-phase current and session energy as entities.
-- Let Home Assistant set a charge limit and start or stop charging, through normal `number` and `switch` entities.
-- Mirror the charger's sessions to the vendor backend as a virtual charge point, with that backend treated as read-only.
-- Stay local: no cloud service is needed for any of this.
+- Accepts the charger on a port you choose and shows its status, power, per-phase current, energy and connection as entities.
+- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; the vendor's commands are answered by the hub and never reach the charger.
+- Stays local: no cloud service of ours is involved.
+
+Still to come: a charge limit and start/stop through `number` and `switch` entities. Writing to a charger needs the owner's explicit approval for each kind of write, so it is not built until that is given.
+
+## Entities
+
+A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, `_model`, `_firmware`, and `binary_sensor.ocpp_hub_<charger id>_connected`. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+
+## Vendor mirror
+
+Open the integration's options and fill in:
+
+- **Backend address:** the vendor's OCPP address, starting with `ws://` or `wss://`, with host, port and path but without the charger's serial number (the hub adds that, as the charger itself does) and without credentials in it. Leave it empty to switch the mirror off.
+- **User name and password:** only if the backend asks for them. They are sent as HTTP Basic authentication; the password field never shows what is stored, and an empty field keeps it.
+
+Per charger there are two diagnostic sensors, `_mirror_status` (idle, connecting or connected, with the last error and the counters as attributes) and `_mirror_queue` (frames waiting).
+
+What the mirror does and does not do:
+
+- It forwards every request of the charger except its heartbeats, in order, one at a time, and sends heartbeats of its own at the interval the vendor asks for. When the vendor is unreachable it keeps the frames in a queue of up to 5000 (only meter values and status changes are dropped when it is full) and delivers them in order when the link is back.
+- Transaction ids differ between the hub and the vendor; the mirror translates them. A stop for a transaction the vendor never confirmed is not sent.
+- Every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
+- The queue and the transaction ids live in memory. If Home Assistant restarts while a charge is running, that session stays open at the vendor, and its meter values go without a transaction id.
 
 ## Install
 

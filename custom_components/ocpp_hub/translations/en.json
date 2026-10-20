@@ -15,5 +15,84 @@
     "abort": {
       "single_instance_allowed": "OCPP Hub is already set up."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vendor backend mirror",
+        "description": "Pass a read-only copy of everything the charger says to the manufacturer's own backend, so its app keeps working. The manufacturer can look but never control the charger. Leave the address empty to switch the mirror off.",
+        "data": {
+          "vendor_url": "Backend address",
+          "vendor_user": "User name",
+          "vendor_password": "Password"
+        },
+        "data_description": {
+          "vendor_url": "Starts with ws:// or wss:// and holds the host, the port and the path of the manufacturer's OCPP backend, without the charger's serial number and without credentials.",
+          "vendor_user": "Only if the backend asks for a user name. Set a password with it.",
+          "vendor_password": "Never shown again. Leave empty to keep the stored password."
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "The address must start with ws:// or wss:// and name a host.",
+      "credentials_in_url": "Remove the user name and password from the address and use the fields below.",
+      "credentials_incomplete": "Set both a user name and a password, or neither.",
+      "invalid_settings": "These settings cannot be used."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "available": "Available",
+          "preparing": "Preparing",
+          "charging": "Charging",
+          "suspended_evse": "Suspended by the charger",
+          "suspended_ev": "Suspended by the car",
+          "finishing": "Finishing",
+          "reserved": "Reserved",
+          "unavailable": "Unavailable",
+          "faulted": "Faulted"
+        }
+      },
+      "power": {
+        "name": "Power"
+      },
+      "energy": {
+        "name": "Energy"
+      },
+      "current_phase": {
+        "name": "Current {phase}"
+      },
+      "voltage_phase": {
+        "name": "Voltage {phase}"
+      },
+      "current_offered": {
+        "name": "Current offered"
+      },
+      "model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "mirror_status": {
+        "name": "Vendor mirror",
+        "state": {
+          "idle": "Idle",
+          "connecting": "Connecting",
+          "connected": "Connected"
+        }
+      },
+      "mirror_queue": {
+        "name": "Vendor mirror queue"
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      }
+    }
   }
 }

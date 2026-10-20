@@ -43,3 +43,4 @@ docs/plan-*.md
 # Claude Code local state
 /.claude/
 /.claude.json
+.venv-ha

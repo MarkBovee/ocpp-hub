@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_FOLDERS = ("custom_components", "tools", ".github/scripts", "tests")
+CODE_FOLDERS = ("custom_components", "tools", ".github/scripts", "tests", "tests_ha")
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
