@@ -65,12 +65,12 @@ async def start_hub() -> AsyncIterator[Callable[..., Awaitable[Hub]]]:
 
     hubs: list[Hub] = []
 
-    # Intent: start one hub with the given setting overrides.
+    # Intent: start one hub with the given setting overrides and any extra listeners, such as the vendor mirror.
     # Why: tests differ only in a few timings, so overrides keep each test short.
-    async def _start(**overrides: Any) -> Hub:
+    async def _start(*extra_listeners: Any, **overrides: Any) -> Hub:
         listener = RecordingListener()
         settings = SessionSettings(**{"setup_delay_s": 3600.0, "call_timeout_s": 1.0, **overrides})
-        central = CentralSystem([listener], settings)
+        central = CentralSystem([listener, *extra_listeners], settings)
         await central.start("127.0.0.1", 0)
         hub = Hub(central, listener)
         hubs.append(hub)

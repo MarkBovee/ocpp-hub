@@ -16,6 +16,7 @@ MSG_CALL_ERROR = 4
 
 # The CALLERROR codes (OCPP 1.6 section 4.2.3) this hub sends itself.
 ERROR_NOT_IMPLEMENTED = "NotImplemented"
+ERROR_NOT_SUPPORTED = "NotSupported"
 ERROR_FORMATION_VIOLATION = "FormationViolation"
 ERROR_INTERNAL = "InternalError"
 
