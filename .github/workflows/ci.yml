@@ -1,0 +1,75 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - "main"
+      - "release/**"
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # A tag pushed before hassfest/HACS finished published a broken release in 1.10.5.
+      # Wait for those two checks on this exact commit and refuse to release unless both passed.
+      - name: Release gate (hassfest and HACS must be green on this commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_gate.py "${{ github.repository }}" "${{ github.sha }}"
+
+      - name: Build release zip
+        run: |
+          git archive --format=tar HEAD custom_components/ocpp_hub | tar xf - -C /tmp
+          cd /tmp/custom_components/ocpp_hub && zip -qr /tmp/ocpp_hub.zip .
+          rm -rf /tmp/custom_components
+
+      - name: Extract changelog entry
+        run: |
+          python3 -c "
+          import re
+          with open('CHANGELOG.md') as f:
+            content = f.read()
+          m = re.search(r'^##\s+.+?\s*\n(.*?)(?=\n##\s|\Z)', content, re.M|re.S)
+          notes = m.group(1).strip() if m else 'Release ${{ github.ref_name }}'
+          open('/tmp/release_notes.md','w').write(notes)
+          "
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=""
+          case "${{ github.ref_name }}" in
+            *-rc*|*rc[0-9]*) PRERELEASE="--prerelease" ;;
+          esac
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" /tmp/ocpp_hub.zip --clobber
+            gh release edit "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }}" \
+              $PRERELEASE \
+              --notes-file /tmp/release_notes.md
+          else
+            gh release create "${{ github.ref_name }}" /tmp/ocpp_hub.zip \
+              --title "${{ github.ref_name }}" \
+              $PRERELEASE \
+              --notes-file /tmp/release_notes.md
+          fi

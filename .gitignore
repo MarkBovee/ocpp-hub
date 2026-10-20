@@ -1,0 +1,45 @@
+# Python bytecode and compiled extensions
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local environment and packaging metadata
+.env
+.venv/
+venv/
+*.egg-info/
+
+# Build artifacts
+dist/
+build/
+
+# Test, type-checking, and lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Local certificates and keys
+*.pem
+*.key
+*.cert
+
+# Raw local captures can hold card ids and serial numbers; curated captures live in tests/fixtures/ with a provenance note
+tests/fixtures/capture_*.jsonl
+captures/
+
+# Written by tools/deploy_ha.py: the commit a deployed copy was built from
+custom_components/ocpp_hub/BUILD
+
+# Local Home Assistant logs
+home-assistant.log
+
+# Local planning artifacts
+docs/plan-*.md
+
+# Claude Code local state
+/.claude/
+/.claude.json

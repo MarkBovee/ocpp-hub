@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OCPP Hub",
+        "description": "Set the port your charger connects to. Point the charger's OCPP profile at ws://<Home Assistant IP>:<port>.",
+        "data": {
+          "port": "Port"
+        },
+        "data_description": {
+          "port": "The TCP port the OCPP server listens on. A port above 1024 needs no special rights."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "OCPP Hub is already set up."
+    }
+  }
+}

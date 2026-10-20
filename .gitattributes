@@ -1,0 +1,2 @@
+# Recorded charger sessions are compared byte for byte, so git must never convert their line endings.
+tests/fixtures/** -text
