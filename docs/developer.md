@@ -23,7 +23,8 @@ python3 -m venv .venv
 
 ## Rules for code
 
-- Every function and every test has an `# Intent:` and a `# Why:` comment directly above it.
+- Every function in code has a short plain comment directly above it saying what it is for (add why when it is not obvious).
+- Every test has an `# Intent:` and a `# Why:` comment directly above it.
 - Put protocol logic in `core/`, and keep `core/` free of Home Assistant imports. If a function needs `hass`, it belongs in the layer above.
 - Prefer small pure modules: they are cheap to test and to mutation-check (`tools/mutation_check.py <module> <test file>`; a surviving mutant is a missing test).
 - Name data shapes (dataclasses) instead of passing loose dictionaries around.

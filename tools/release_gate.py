@@ -23,8 +23,8 @@ from collections.abc import Callable, Mapping, Sequence
 REQUIRED_CHECKS: tuple[str, ...] = ("validate", "validate-hacs")
 
 
-# Intent: reduce the check runs of one commit to pass, fail or pending for the required checks.
-# Why: a missing or unfinished check must wait; only a finished check that is not a success fails at once.
+# Reduce the check runs of one commit to pass, fail or pending for the required checks.
+# A missing or unfinished check must wait; only a finished check that is not a success fails at once.
 def evaluate(check_runs: Sequence[Mapping[str, object]], required: Sequence[str] = REQUIRED_CHECKS) -> tuple[str, str]:
     """Return ``(state, detail)`` where state is ``pass``, ``fail`` or ``pending``."""
     by_name: dict[str, Mapping[str, object]] = {}
@@ -43,8 +43,8 @@ def evaluate(check_runs: Sequence[Mapping[str, object]], required: Sequence[str]
     return "pass", "all required checks succeeded"
 
 
-# Intent: read all check runs of one commit through the `gh` CLI.
-# Why: the gate needs the real result for the tagged commit, not the state of a branch.
+# Read all check runs of one commit through the `gh` CLI.
+# The gate needs the real result for the tagged commit, not the state of a branch.
 def _fetch_check_runs(repo: str, sha: str) -> list[dict[str, object]]:
     out = subprocess.run(
         ["gh", "api", f"repos/{repo}/commits/{sha}/check-runs", "--paginate", "--jq", ".check_runs[]"],
@@ -55,14 +55,14 @@ def _fetch_check_runs(repo: str, sha: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
-# Intent: choose the checks a release must pass: the HACS check only exists for public repositories.
-# Why: the HACS action refuses a private repository, so waiting for it there would block every release forever.
+# Choose the checks a release must pass: the HACS check only exists for public repositories.
+# The HACS action refuses a private repository, so waiting for it there would block every release forever.
 def required_checks(private: bool) -> tuple[str, ...]:
     return tuple(name for name in REQUIRED_CHECKS if not (private and name == "validate-hacs"))
 
 
-# Intent: ask GitHub whether the repository is private.
-# Why: the required checks depend on it, and the gate must not guess.
+# Ask GitHub whether the repository is private.
+# The required checks depend on it, and the gate must not guess.
 def _is_private(repo: str) -> bool:
     out = subprocess.run(
         ["gh", "api", f"repos/{repo}", "--jq", ".private"], check=True, capture_output=True, text=True
@@ -70,8 +70,8 @@ def _is_private(repo: str) -> bool:
     return out.strip() == "true"
 
 
-# Intent: poll the check runs until the gate passes, fails or the timeout ends.
-# Why: hassfest and HACS run in other workflows and can finish after the tag push; sleep and clock are replaceable.
+# Poll the check runs until the gate passes, fails or the timeout ends.
+# Hassfest and HACS run in other workflows and can finish after the tag push; sleep and clock are replaceable.
 def wait_for_gate(
     fetch: Callable[[], Sequence[Mapping[str, object]]],
     timeout: float,
@@ -92,8 +92,8 @@ def wait_for_gate(
         sleep(interval)
 
 
-# Intent: parse the arguments, run the gate and turn its result into the exit code.
-# Why: the release job stops on a non-zero exit before it builds the zip.
+# Parse the arguments, run the gate and turn its result into the exit code.
+# The release job stops on a non-zero exit before it builds the zip.
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repo")

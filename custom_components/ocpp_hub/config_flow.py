@@ -15,8 +15,8 @@ class OcppHubConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    # Intent: show the port form and create the entry once it is submitted.
-    # Why: the port is the only setting the charger side needs; everything else is configured per charger later.
+    # Show the port form and create the entry once it is submitted.
+    # The port is the only setting the charger side needs; everything else is configured per charger later.
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")

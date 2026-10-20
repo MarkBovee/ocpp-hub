@@ -47,23 +47,23 @@ class Target:
     key: str | None = None  # path to a private key; ssh reads it, this script never does
     sudo: bool = True  # the SSH user cannot write in /config and needs passwordless sudo
 
-    # Intent: the folder the integration lives in on the server.
-    # Why: deploy, backup and verification must agree on one path.
+    # The folder the integration lives in on the server.
+    # Deploy, backup and verification must agree on one path.
     @property
     def remote_dir(self) -> str:
         """Where the integration lives on the server."""
         return f"{self.config_dir}/custom_components/ocpp_hub"
 
-    # Intent: the folder holding timestamped backups of the previous copy.
-    # Why: it lives outside custom_components so Home Assistant never loads a backup.
+    # The folder holding timestamped backups of the previous copy.
+    # It lives outside custom_components so Home Assistant never loads a backup.
     @property
     def backup_dir(self) -> str:
         """Where timestamped backups of the previous copy are kept, outside custom_components so HA never loads them."""
         return f"{self.config_dir}/.ocpp_hub-backup"
 
 
-# Intent: read KEY=value pairs from a .env text; comments and blank lines are ignored and quotes are stripped.
-# Why: deployment settings live in a git-ignored file and must never be exported to child processes.
+# Read KEY=value pairs from a .env text; comments and blank lines are ignored and quotes are stripped.
+# Deployment settings live in a git-ignored file and must never be exported to child processes.
 def parse_env(text: str) -> dict[str, str]:
     env: dict[str, str] = {}
     for line in text.splitlines():
@@ -74,14 +74,14 @@ def parse_env(text: str) -> dict[str, str]:
     return env
 
 
-# Intent: return the bare host name of a value that may be a host or a URL such as http://homeassistant.local:8123.
-# Why: .env often holds the API URL while SSH needs only the host.
+# Return the bare host name of a value that may be a host or a URL such as http://homeassistant.local:8123.
+# .env often holds the API URL while SSH needs only the host.
 def _bare_host(value: str) -> str:
     return (urlparse(value).hostname or value) if "//" in value else value
 
 
-# Intent: resolve host, SSH user and key path from options or .env, and refuse to guess.
-# Why: a missing user must stop the run with a readable message instead of connecting as the wrong account.
+# Resolve host, SSH user and key path from options or .env, and refuse to guess.
+# A missing user must stop the run with a readable message instead of connecting as the wrong account.
 def target_from_env(
     env: dict[str, str], host: str | None = None, user: str | None = None, key: str | None = None
 ) -> Target:
@@ -94,8 +94,8 @@ def target_from_env(
     return Target(_bare_host(resolved_host), resolved_user, key=key_path)
 
 
-# Intent: list the files to deploy relative to the integration folder: tracked and untracked-but-not-ignored, no caches.
-# Why: what git knows is what ships; a stray local file or a __pycache__ must never reach the server.
+# List the files to deploy relative to the integration folder: tracked and untracked-but-not-ignored, no caches.
+# What git knows is what ships; a stray local file or a __pycache__ must never reach the server.
 def relative_files(root: Path = ROOT) -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "-c", "-o", "--exclude-standard", "-z", "--", str(INTEGRATION)],
@@ -107,8 +107,8 @@ def relative_files(root: Path = ROOT) -> list[str]:
     return sorted(p[len(prefix) :] for p in out.split("\0") if p.startswith(prefix) and "__pycache__" not in p)
 
 
-# Intent: write the commit the deployed code comes from into the integration's BUILD file and return it.
-# Why: a log line must say which code wrote it; without a stamp an old build and the current one look identical.
+# Write the commit the deployed code comes from into the integration's BUILD file and return it.
+# A log line must say which code wrote it; without a stamp an old build and the current one look identical.
 def write_build_stamp(root: Path = ROOT) -> str:
     head = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True, check=True
@@ -125,14 +125,14 @@ def write_build_stamp(root: Path = ROOT) -> str:
     return stamp
 
 
-# Intent: compute the sha256 of every local file to deploy.
-# Why: the server copy is verified against these digests after the swap.
+# Compute the sha256 of every local file to deploy.
+# The server copy is verified against these digests after the swap.
 def local_digests(files: list[str], root: Path = ROOT) -> dict[str, str]:
     return {name: hashlib.sha256((root / INTEGRATION / name).read_bytes()).hexdigest() for name in files}
 
 
-# Intent: turn `sha256sum` output into a {relative path: digest} mapping; paths may start with './'.
-# Why: the remote listing is plain text and must be compared with the local digests.
+# Turn `sha256sum` output into a {relative path: digest} mapping; paths may start with './'.
+# The remote listing is plain text and must be compared with the local digests.
 def parse_sha256sum(output: str) -> dict[str, str]:
     digests: dict[str, str] = {}
     for line in output.splitlines():
@@ -142,8 +142,8 @@ def parse_sha256sum(output: str) -> dict[str, str]:
     return digests
 
 
-# Intent: compare local and remote digests and return (missing on the server, unexpected on the server, different).
-# Why: a deploy is only done when all three lists are empty.
+# Compare local and remote digests and return (missing on the server, unexpected on the server, different).
+# A deploy is only done when all three lists are empty.
 def compare(local: dict[str, str], remote: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
     missing = sorted(set(local) - set(remote))
     extra = sorted(set(remote) - set(local))
@@ -151,8 +151,8 @@ def compare(local: dict[str, str], remote: dict[str, str]) -> tuple[list[str], l
     return missing, extra, different
 
 
-# Intent: build the POSIX sh run on the server: back up the old copy, unpack stdin next to it, swap, prune old backups.
-# Why: unpacking completely before replacing means a broken transfer leaves the running integration untouched;
+# Build the POSIX sh run on the server: back up the old copy, unpack stdin next to it, swap, prune old backups.
+# Unpacking completely before replacing means a broken transfer leaves the running integration untouched;
 # the script avoids GNU-only flags because the SSH add-on runs BusyBox.
 def remote_install_script(target: Target, keep: int = KEEP_BACKUPS) -> str:
     d, b, parent = target.remote_dir, target.backup_dir, f"{target.config_dir}/custom_components"
@@ -168,14 +168,14 @@ def remote_install_script(target: Target, keep: int = KEEP_BACKUPS) -> str:
     )
 
 
-# Intent: wrap a script in `sudo -n sh -c` when needed; stdin (the tar stream) passes straight through.
-# Why: `-n` makes sudo fail instead of asking for a password, so nothing here can prompt for one.
+# Wrap a script in `sudo -n sh -c` when needed; stdin (the tar stream) passes straight through.
+# `-n` makes sudo fail instead of asking for a password, so nothing here can prompt for one.
 def privileged(script: str, sudo: bool) -> str:
     return f"sudo -n sh -c {shlex.quote(script)}" if sudo else script
 
 
-# Intent: build an ssh invocation that shares one authenticated connection (ControlMaster).
-# Why: a key is passed by path only and `batch` forbids any prompt, so an unauthorised key fails instead of asking.
+# Build an ssh invocation that shares one authenticated connection (ControlMaster).
+# A key is passed by path only and `batch` forbids any prompt, so an unauthorised key fails instead of asking.
 def ssh_command(
     target: Target, control_path: str, *remote: str, master: bool = False, batch: bool = False
 ) -> list[str]:
@@ -189,16 +189,16 @@ def ssh_command(
     return ["ssh", *options, f"{target.user}@{target.host}", *remote]
 
 
-# Intent: run the CI-equivalent checks and abort the deploy when they fail.
-# Why: a failing tree must never reach the server; one command gives the same answer as CI.
+# Run the CI-equivalent checks and abort the deploy when they fail.
+# A failing tree must never reach the server; one command gives the same answer as CI.
 def run_checks(root: Path = ROOT) -> None:
     result = subprocess.run([sys.executable, str(root / "tools" / "validate.py")], cwd=root)
     if result.returncode:
         raise SystemExit("Checks failed; nothing was deployed. Fix them (or use --skip-checks if you know why).")
 
 
-# Intent: start tar writing the files, relative to the integration folder, to its stdout.
-# Why: entries are root-owned so the server copy matches the other components regardless of local user ids.
+# Start tar writing the files, relative to the integration folder, to its stdout.
+# Entries are root-owned so the server copy matches the other components regardless of local user ids.
 def stream_tar(files: list[str], root: Path = ROOT) -> subprocess.Popen[bytes]:
     command = [
         "tar",
@@ -220,11 +220,11 @@ def stream_tar(files: list[str], root: Path = ROOT) -> subprocess.Popen[bytes]:
     return tar
 
 
-# Intent: open the shared connection, install the files, and verify every file by checksum.
-# Why: the swap is only reported as done when the server copy is byte-identical to the local files.
+# Open the shared connection, install the files, and verify every file by checksum.
+# The swap is only reported as done when the server copy is byte-identical to the local files.
 def deploy(target: Target, files: list[str], control_path: str, batch: bool = False) -> None:
-    # Intent: build an ssh command line for this target on the shared connection.
-    # Why: every remote step must use the same control path and batch setting.
+    # Build an ssh command line for this target on the shared connection.
+    # Every remote step must use the same control path and batch setting.
     def ssh(*remote: str, master: bool = False) -> list[str]:
         return ssh_command(target, control_path, *remote, master=master, batch=batch)
 
@@ -253,8 +253,8 @@ def deploy(target: Target, files: list[str], control_path: str, batch: bool = Fa
         )
 
 
-# Intent: poll the REST API until it answers 200 again after a restart.
-# Why: the API first goes away and then comes back; a short wait first avoids mistaking the old instance for the new.
+# Poll the REST API until it answers 200 again after a restart.
+# The API first goes away and then comes back; a short wait first avoids mistaking the old instance for the new.
 def wait_for_home_assistant(base: str, token: str, timeout_s: int = 300, poll_s: int = 5) -> bool:
     request = urllib.request.Request(base + "/", headers={"Authorization": f"Bearer {token}"})
     time.sleep(poll_s)
@@ -270,8 +270,8 @@ def wait_for_home_assistant(base: str, token: str, timeout_s: int = 300, poll_s:
     return False
 
 
-# Intent: validate the Home Assistant configuration and restart it over the REST API, after a confirmation.
-# Why: a new or changed integration is only loaded after a restart; the token is read from .env and never printed.
+# Validate the Home Assistant configuration and restart it over the REST API, after a confirmation.
+# A new or changed integration is only loaded after a restart; the token is read from .env and never printed.
 def restart_home_assistant(env: dict[str, str], assume_yes: bool) -> None:
     base, token = env.get("HA_API_URL", "").rstrip("/"), env.get("HA_API_TOKEN", "")
     if not base or not token:
@@ -281,8 +281,8 @@ def restart_home_assistant(env: dict[str, str], assume_yes: bool) -> None:
         print("Not restarting. A new integration is only found after a restart.")
         return
 
-    # Intent: POST to the Home Assistant API with the bearer token and return the JSON answer.
-    # Why: the config check and the restart share one authenticated call and the token is never printed.
+    # POST to the Home Assistant API with the bearer token and return the JSON answer.
+    # The config check and the restart share one authenticated call and the token is never printed.
     def call(path: str) -> dict[str, object]:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         request = urllib.request.Request(base + path, data=b"{}", method="POST", headers=headers)
@@ -303,8 +303,8 @@ def restart_home_assistant(env: dict[str, str], assume_yes: bool) -> None:
     )
 
 
-# Intent: command line entry point.
-# Why: one command covers checks, deploy, verification and the optional restart.
+# Command line entry point.
+# One command covers checks, deploy, verification and the optional restart.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", help="override HA_HOST")

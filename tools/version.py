@@ -36,22 +36,22 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 _PRE_RELEASE = r"(rc|alpha|beta|a|b|post|dev)"
 
 
-# Intent: normalise a version string for comparison.
-# Why: 1.8.0-rc2 and 1.8.0rc2 name the same release.
+# Normalise a version string for comparison.
+# 1.8.0-rc2 and 1.8.0rc2 name the same release.
 def canonical(version: str) -> str:
     """Normalize ``1.8.0-rc2`` / ``1.8.0rc2`` / ``1.8.0`` for comparison."""
     return re.sub(r"[^0-9a-z]", "", version.strip().lower())
 
 
-# Intent: convert a display version to PEP 440 form.
-# Why: pyproject.toml needs 1.8.0rc2 while the manifest keeps the hyphen.
+# Convert a display version to PEP 440 form.
+# Pyproject.toml needs 1.8.0rc2 while the manifest keeps the hyphen.
 def pyproject_version(version: str) -> str:
     """PEP 440 form for pyproject: ``1.8.0-rc2`` → ``1.8.0rc2``."""
     return re.sub(rf"-{_PRE_RELEASE}", r"\1", version, count=1, flags=re.IGNORECASE)
 
 
-# Intent: read the version from pyproject.toml.
-# Why: it is one of the three places that must agree.
+# Read the version from pyproject.toml.
+# It is one of the three places that must agree.
 def read_pyproject() -> str:
     match = re.search(r'^version\s*=\s*"([^"]+)"', PYPROJECT.read_text(), re.MULTILINE)
     if match is None:
@@ -59,20 +59,20 @@ def read_pyproject() -> str:
     return match.group(1)
 
 
-# Intent: read the version from the integration manifest.
-# Why: Home Assistant and HACS show this version.
+# Read the version from the integration manifest.
+# Home Assistant and HACS show this version.
 def read_manifest() -> str:
     return str(json.loads(MANIFEST.read_text())["version"])
 
 
-# Intent: list the version headings of the changelog.
-# Why: the top heading must match the released version.
+# List the version headings of the changelog.
+# The top heading must match the released version.
 def read_changelog_headings() -> list[str]:
     return re.findall(r"^##\s+(\S+)", CHANGELOG.read_text(), re.MULTILINE)
 
 
-# Intent: compare the three places and report drift.
-# Why: CI must fail when they disagree.
+# Compare the three places and report drift.
+# CI must fail when they disagree.
 def check() -> int:
     pyproject, manifest, headings = read_pyproject(), read_manifest(), read_changelog_headings()
     problems: list[str] = []
@@ -88,8 +88,8 @@ def check() -> int:
     return 0
 
 
-# Intent: write a new version to pyproject.toml and the manifest.
-# Why: release notes stay human-written, but the numbers should not be.
+# Write a new version to pyproject.toml and the manifest.
+# Release notes stay human-written, but the numbers should not be.
 def bump(new: str) -> int:
     pyproject_text = PYPROJECT.read_text()
     pyproject_new = re.sub(
@@ -123,8 +123,8 @@ def bump(new: str) -> int:
     return check()
 
 
-# Intent: dispatch the check and bump commands.
-# Why: one entry point serves CI and the release steps.
+# Dispatch the check and bump commands.
+# One entry point serves CI and the release steps.
 def main(argv: list[str]) -> int:
     if len(argv) < 2 or argv[1] not in ("check", "bump"):
         print(__doc__, file=sys.stderr)
