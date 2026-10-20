@@ -31,7 +31,8 @@
 
 ## Code rules
 
-- Every function and test has an `# Intent:` and a `# Why:` comment directly above it.
+- Every function in code has a short plain comment directly above it saying what it is for; add why when the reason is not obvious.
+- Every test has an `# Intent:` and a `# Why:` comment directly above it. Code uses ordinary comments, not those labels.
 - Python 3.14. ruff with a 120-character limit, comments included. `mypy --strict` on `core/`.
 - Name data shapes (dataclasses) instead of passing loose dictionaries. Fail fast on bad input at the boundary.
 - Do not catch broad exceptions except at a boundary that must keep a connection alive, and comment why there.

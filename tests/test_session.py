@@ -1,0 +1,237 @@
+"""The charger session and the central system, driven by a fake charger over a real websocket."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from ocpp_hub_core.session import CallRejectedError, CallTimeoutError
+
+
+# Intent: a BootNotification is accepted with the hub's time and interval, and the identity lands in the snapshot.
+# Why: the charger only starts working normally after an Accepted boot, and Home Assistant shows this identity.
+async def test_boot_is_accepted_and_identity_is_recorded(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    answer = await charger.boot()
+
+    assert answer[0] == 3 and answer[2]["status"] == "Accepted" and answer[2]["interval"] == 300
+    assert answer[2]["currentTime"].endswith("Z")
+    info = hub.listener.latest.info
+    assert (info.vendor, info.model, info.firmware) == ("RAEDIAN", "NEO_22T_A", "s8100000001131&2.0.5_134")
+    assert hub.listener.latest.connected and hub.listener.connected == ["TEST0001"]
+
+
+# Intent: a heartbeat is answered with the current time.
+# Why: chargers set their clock from it and treat a missing answer as a dead link.
+async def test_heartbeat_returns_time(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    answer = await charger.call("Heartbeat", {})
+
+    assert answer[0] == 3 and answer[2]["currentTime"].endswith("Z")
+
+
+# Intent: a status notification updates that connector and leaves the others alone.
+# Why: connector 0 is the charger itself and connector 1 the socket; Home Assistant shows connector 1.
+async def test_status_notification_updates_one_connector(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    await charger.call("StatusNotification", {"connectorId": 0, "status": "Available", "errorCode": "NoError"})
+    answer = await charger.call(
+        "StatusNotification",
+        {"connectorId": 1, "status": "Preparing", "errorCode": "NoError", "info": '{"current": 12}'},
+    )
+
+    connectors = hub.listener.latest.connectors
+    assert answer[0] == 3
+    assert connectors[0].status == "Available" and connectors[1].status == "Preparing"
+    assert connectors[1].info == '{"current": 12}'
+
+
+# Intent: MeterValues land as one sample with per-phase current.
+# Why: the per-phase current is the input of load balancing against the mains limit.
+async def test_meter_values_update_the_sample(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    await charger.call(
+        "MeterValues",
+        {
+            "connectorId": 1,
+            "meterValue": [
+                {
+                    "timestamp": "2026-10-20T18:00:00Z",
+                    "sampledValue": [
+                        {"measurand": "Current.Import", "phase": "L1", "value": "10.5", "unit": "A"},
+                        {"measurand": "Power.Active.Import", "value": "2.4", "unit": "kW"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    meter = hub.listener.latest.meter
+    assert meter.current_a == {"L1": 10.5} and meter.power_w == 2400.0
+
+
+# Intent: a transaction gets a unique, increasing id that is cleared again when it stops.
+# Why: ids must never repeat while a charger may still hold the old one, and a stopped session must not look active.
+async def test_transaction_lifecycle_and_unique_ids(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    first = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "tag", "meterStart": 100, "timestamp": "t"}
+    )
+    assert hub.listener.latest.connectors[1].transaction_id == first[2]["transactionId"]
+    assert first[2]["idTagInfo"]["status"] == "Accepted" and hub.listener.latest.connectors[1].meter_start_wh == 100.0
+    stop = await charger.call(
+        "StopTransaction", {"transactionId": first[2]["transactionId"], "meterStop": 200, "timestamp": "t"}
+    )
+    second = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "tag", "meterStart": 200, "timestamp": "t"}
+    )
+
+    assert stop[0] == 3 and hub.listener.latest.connectors[1].transaction_id == second[2]["transactionId"]
+    assert second[2]["transactionId"] > first[2]["transactionId"]
+
+
+# Intent: unknown actions, bad payloads and bad field types get an error frame and the link stays up.
+# Why: a charger must always get an answer, and one bad frame must not end the connection.
+async def test_bad_requests_get_errors_and_the_link_survives(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    unknown = await charger.call("MakeCoffee", {})
+    bad_type = await charger.call("StatusNotification", {"connectorId": "one", "status": "Available"})
+    bad_payload = await charger.call("Heartbeat", [])
+    await charger.send_raw("this is not json")
+    await charger.send_raw(b"\x00\x01".decode("latin-1"))
+    alive = await charger.call("Heartbeat", {})
+
+    assert unknown[:3] == [4, unknown[1], "NotImplemented"]
+    assert bad_type[2] == "FormationViolation" and bad_payload[2] == "FormationViolation"
+    assert alive[0] == 3
+
+
+# Intent: after boot the hub reads the configuration and stores the supported feature profiles.
+# Why: whether smart charging is offered at all decides if a current limit can ever be set.
+async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0)
+    charger = await hub.charger()
+    await charger.boot()
+
+    request = await charger.next_hub_call()
+    await charger.answer(
+        request,
+        {
+            "configurationKey": [
+                {"key": "SupportedFeatureProfiles", "readonly": True, "value": "Core,FirmwareManagement,SmartCharging"},
+                {"key": "MeterValuesSampledData", "readonly": False, "value": "Energy.Active.Import.Register"},
+                {"key": "MeterValueSampleInterval", "readonly": False, "value": "15"},
+            ]
+        },
+    )
+    change = await charger.next_hub_call()
+    await charger.answer(change, {"status": "Accepted"})
+
+    assert request[2] == "GetConfiguration" and "SupportedFeatureProfiles" in request[3]["key"]
+    assert change[2] == "ChangeConfiguration" and change[3]["key"] == "MeterValuesSampledData"
+    assert "Current.Import" in change[3]["value"]
+    await asyncio.sleep(0.05)
+    assert hub.listener.latest.features == {"Core", "FirmwareManagement", "SmartCharging"}
+    assert hub.listener.latest.configuration["MeterValuesSampledData"] == change[3]["value"]
+
+
+# Intent: a metering setting the charger already has is not written again.
+# Why: every needless write to a charger is a risk and wears its flash; the hub only changes what differs.
+async def test_matching_metering_settings_are_left_alone(start_hub) -> None:
+    from ocpp_hub_core.session import SessionSettings
+
+    wanted = SessionSettings()
+    hub = await start_hub(setup_delay_s=0.0)
+    charger = await hub.charger()
+    await charger.boot()
+    request = await charger.next_hub_call()
+
+    await charger.answer(
+        request,
+        {
+            "configurationKey": [
+                {"key": "MeterValuesSampledData", "readonly": False, "value": wanted.measurands},
+                {"key": "MeterValueSampleInterval", "readonly": False, "value": str(wanted.meter_sample_interval_s)},
+            ]
+        },
+    )
+
+    with pytest.raises(TimeoutError):
+        await charger.next_hub_call(timeout=0.3)
+
+
+# Intent: a request the charger does not answer times out, and an error answer is raised with its code.
+# Why: callers (limits, start, stop) must be able to tell a silent charger from a refusing one.
+async def test_call_timeout_and_rejection(start_hub) -> None:
+    hub = await start_hub(call_timeout_s=0.3)
+    charger = await hub.charger()
+    await charger.boot()
+    session = hub.central.session("TEST0001")
+
+    silent = asyncio.create_task(session.call("Reset", {"type": "Soft"}))
+    await charger.next_hub_call()
+    with pytest.raises(CallTimeoutError):
+        await silent
+
+    refused = asyncio.create_task(session.call("Reset", {"type": "Soft"}))
+    request = await charger.next_hub_call()
+    await charger.answer_error(request, "NotSupported")
+    with pytest.raises(CallRejectedError) as error:
+        await refused
+    assert error.value.code == "NotSupported"
+
+
+# Intent: the same charger reconnecting replaces the old connection, and a disconnect is reported.
+# Why: after a Wi-Fi drop the charger returns before the hub notices the old link is dead.
+async def test_reconnect_replaces_the_old_session_and_disconnect_is_reported(start_hub) -> None:
+    hub = await start_hub()
+    first = await hub.charger()
+    await first.boot()
+
+    second = await hub.charger()
+    await second.boot()
+    await first.wait_closed()
+    await second.close()
+    await asyncio.sleep(0.1)
+
+    assert hub.central.session("TEST0001") is None
+    assert hub.listener.disconnected.count("TEST0001") == 2
+    assert hub.listener.latest.connected is False
+
+
+# Intent: listeners see the charger's frames and the hub's answers, each labelled with its sender.
+# Why: the mirror forwards the charger's frames and needs the hub's StartTransaction answer to map ids.
+async def test_listener_sees_both_directions(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    await charger.call("Heartbeat", {})
+
+    senders = [(sender, frame[0]) for _, sender, frame in hub.listener.frames]
+    assert senders == [("CP", 2), ("CSMS", 3)]
+
+
+# Intent: a connection without a charger identity is refused.
+# Why: the identity is the only way to tell chargers apart; without it nothing can be tracked.
+async def test_connection_without_identity_is_refused(start_hub) -> None:
+    from tests.fake_charger import FakeCharger
+
+    hub = await start_hub()
+    charger = FakeCharger(hub.central.port, cp_id="")
+    await charger.connect()
+
+    await charger.wait_closed()
+
+    assert charger.close_code == 4001

@@ -21,15 +21,15 @@ from pathlib import Path
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "ocpp_hub"
 
 
-# Intent: return the translation files hassfest validates for this integration.
-# Why: strings.json and every language file follow the same schema.
+# Return the translation files hassfest validates for this integration.
+# Strings.json and every language file follow the same schema.
 def translation_files(component: Path = COMPONENT) -> list[Path]:
     files = [component / "strings.json", *sorted((component / "translations").glob("*.json"))]
     return [path for path in files if path.exists()]
 
 
-# Intent: validate the `issues` section of one parsed translation file.
-# Why: a fixable repair must carry its text in fix_flow; a top-level description makes hassfest fail.
+# Validate the `issues` section of one parsed translation file.
+# A fixable repair must carry its text in fix_flow; a top-level description makes hassfest fail.
 def issue_problems(data: dict[str, object]) -> list[str]:
     problems: list[str] = []
     issues = data.get("issues", {})
@@ -48,8 +48,8 @@ def issue_problems(data: dict[str, object]) -> list[str]:
     return problems
 
 
-# Intent: find strings that look like HTML, such as ``<port>`` or ``<b>``, anywhere in a parsed translation file.
-# Why: hassfest rejects them ("the string should not contain HTML"), and angle-bracket placeholders look like tags.
+# Find strings that look like HTML, such as ``<port>`` or ``<b>``, anywhere in a parsed translation file.
+# Hassfest rejects them ("the string should not contain HTML"), and angle-bracket placeholders look like tags.
 def html_problems(node: object, path: str = "") -> list[str]:
     problems: list[str] = []
     if isinstance(node, dict):
@@ -60,8 +60,8 @@ def html_problems(node: object, path: str = "") -> list[str]:
     return problems
 
 
-# Intent: check every translation file and print the problems found.
-# Why: one command gives CI parity for the translation rules.
+# Check every translation file and print the problems found.
+# One command gives CI parity for the translation rules.
 def main() -> int:
     failed = False
     for path in translation_files():
