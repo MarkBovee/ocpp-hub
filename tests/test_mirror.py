@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import logging
 import shutil
 import ssl
 import subprocess
@@ -424,3 +426,53 @@ async def test_wss_vendor_is_reached_with_the_given_ssl_context(
         await vendor.stop()
 
     assert vendor.url.startswith("wss://") and vendor.actions() == ["BootNotification"]
+
+
+# Intent: two StartTransaction requests that share a unique id and wait for an offline vendor each keep their own pair.
+# Why: a charger that restarts its message counter would otherwise give a transaction the vendor id of another one,
+# and a stop or meter value could then end or pollute the wrong session at the vendor.
+async def test_reused_start_ids_still_pair_with_the_right_vendor_transaction(start_rig: Any) -> None:
+    rig = await start_rig()
+    await rig.vendor.stop()
+    charger = await rig.hub.charger()
+    start = {"connectorId": 1, "idTag": "t", "meterStart": 1, "timestamp": "t"}
+
+    # The transaction ids the hub handed out for the requests with unique id X, in order.
+    def hub_transactions() -> list[int]:
+        return [f[2]["transactionId"] for _, sender, f in rig.hub.listener.frames if sender == "CSMS" and f[1] == "X"]
+
+    await charger.send_raw(json.dumps([2, "X", "StartTransaction", start]))
+    await eventually(lambda: len(hub_transactions()) == 1, message="first start not answered by the hub")
+    await charger.send_raw(json.dumps([2, "X", "StartTransaction", start]))
+    await eventually(lambda: len(hub_transactions()) == 2, message="second start not answered by the hub")
+    first, second = hub_transactions()
+    await rig.vendor.start()
+    await eventually(lambda: len(rig.vendor.calls_of("StartTransaction")) == 2, message="starts not delivered")
+    await eventually(lambda: rig.mirror.status(CHARGER).queue_length == 0, message="starts not answered")
+    await charger.call("MeterValues", {"connectorId": 1, "transactionId": second, "meterValue": METER_VALUE})
+    await charger.call("StopTransaction", {"transactionId": first, "meterStop": 2, "timestamp": "t"})
+    await eventually(lambda: rig.vendor.calls_of("StopTransaction"), message="stop did not arrive")
+
+    assert first != second
+    assert rig.vendor.calls_of("MeterValues")[0][3]["transactionId"] == 7002
+    assert rig.vendor.calls_of("StopTransaction")[0][3]["transactionId"] == 7001
+
+
+# Intent: the vendor password and its encoded form never appear in a log line, even with debug logging on everywhere.
+# Why: the websockets library logs every request header at debug level, and Home Assistant logs get pasted into issues.
+async def test_vendor_password_never_reaches_the_log(start_rig: Any, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    rig = await start_rig(user="mirror-user", password="s3cret")
+    charger = await rig.hub.charger()
+
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+
+    encoded = base64.b64encode(b"mirror-user:s3cret").decode()
+    # The fake vendor's own websocket server logs what it receives; only our side of the connection is under test.
+    ours = "\n".join(
+        record.getMessage() for record in caplog.records if not record.name.startswith("websockets.server")
+    )
+    assert rig.vendor.authorizations == [f"Basic {encoded}"]
+    assert "Authorization" in ours, "the header must be logged (redacted), or this test proves nothing"
+    assert "s3cret" not in ours and encoded not in ours

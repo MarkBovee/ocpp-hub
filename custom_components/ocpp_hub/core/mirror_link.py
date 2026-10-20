@@ -50,6 +50,23 @@ _LOGGER = logging.getLogger(__name__)
 VENDOR_SUBPROTOCOL = Subprotocol("ocpp1.6")
 
 
+class _RedactAuthorization(logging.Filter):
+    """Hides the value of the Authorization header, which the websockets library logs at debug level."""
+
+    # Replace the header value in a record that logs an Authorization header; pass every other record unchanged.
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 2 and str(args[0]).lower() == "authorization":
+            record.args = (args[0], "[redacted]")
+        return True
+
+
+# The websockets library logs every request header at debug level, the Authorization header with the vendor password
+# included. The vendor connection gets this logger instead of the library's own, so a debug log can never leak it.
+_WEBSOCKET_LOGGER = logging.getLogger(f"{__name__}.websocket")
+_WEBSOCKET_LOGGER.addFilter(_RedactAuthorization())
+
+
 # A fresh unique id for a frame the mirror makes up itself (a heartbeat or a replay).
 # The prefix keeps them apart from the ids the charger chose.
 def _new_id() -> str:
@@ -86,6 +103,8 @@ class MirrorLink:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._queue = OutgoingQueue(settings.max_queue)
         self._pairing = StartPairing(transactions)
+        # Charger unique id of a StartTransaction the hub has not answered yet -> the mirror's id for it.
+        self._start_tokens: dict[str, str] = {}
         self._replies: dict[str, asyncio.Future[Frame]] = {}
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -162,19 +181,32 @@ class MirrorLink:
         elif action == ACTION_STATUS and (connector := connector_of(item)) is not None:
             self._statuses[connector] = item
         elif action == ACTION_START:
-            self._pairing.expect(item.unique_id)
+            item = self._track_start(item)
         self._enqueue(item)
 
+    # Give a StartTransaction a unique id of the mirror's own and remember which charger id it belongs to.
+    # A charger can reuse an id after a restart while an earlier start still waits for an offline vendor, so pairing
+    # on the charger's id would mix up the two transactions.
+    def _track_start(self, item: Outgoing) -> Outgoing:
+        tracked = replace(item, unique_id=_new_id())
+        self._start_tokens[item.unique_id] = tracked.unique_id
+        self._pairing.expect(tracked.unique_id)
+        return tracked
+
     # Take in a frame the hub sent to the charger. Only the answers to StartTransaction matter: they carry the
-    # transaction id the hub handed out, which the vendor's own id has to be paired with.
+    # transaction id the hub handed out, which the vendor's own id has to be paired with. The hub answers every
+    # request once, so the id is forgotten here and the table cannot grow.
     def hub_frame(self, frame: Frame) -> None:
-        unique_id = str(frame[1])
-        if frame[0] == MSG_CALL_ERROR:
-            self._pairing.abandon(unique_id)
-        elif frame[0] == MSG_CALL_RESULT and isinstance(frame[2], dict):
-            hub_id = frame[2].get("transactionId")
-            if is_integer(hub_id):
-                self._pairing.hub_answered(unique_id, hub_id)
+        if frame[0] not in (MSG_CALL_RESULT, MSG_CALL_ERROR):
+            return
+        token = self._start_tokens.pop(str(frame[1]), None)
+        if token is None:
+            return
+        hub_id = frame[2].get("transactionId") if frame[0] == MSG_CALL_RESULT and isinstance(frame[2], dict) else None
+        if is_integer(hub_id):
+            self._pairing.hub_answered(token, hub_id)
+        else:
+            self._pairing.abandon(token)
 
     # Queue a frame, count what the size limit made us drop, and wake the sender.
     def _enqueue(self, item: Outgoing) -> None:
@@ -266,6 +298,7 @@ class MirrorLink:
             additional_headers=[auth] if auth else None,
             open_timeout=self._settings.connect_timeout_s,
             proxy=None,
+            logger=_WEBSOCKET_LOGGER,
             **options,
         )
 
