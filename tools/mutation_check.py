@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -129,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args:
         print(__doc__)
         return 2
+    # SIGTERM (from `timeout` or a CI cancel) skips `finally` by default, which would leave the mutant on disk.
+    # Turning it into a normal exit lets the target be restored.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     target = (ROOT / args[0]).resolve()
     pytest_args = args[1:] or ["tests"]
     survivors: list[Mutant] = []
