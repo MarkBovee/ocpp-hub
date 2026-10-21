@@ -119,7 +119,9 @@ async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
 
 # Intent: an address on another host or port does not inherit the stored password; the form asks for one again.
 # Why: the stored password belongs to the old server and must never be sent to a new one without being retyped.
-@pytest.mark.parametrize("new_url", ["wss://new.example/ocpp", "wss://old.example:8443/ocpp", "ws://[::1/ocpp"])
+@pytest.mark.parametrize(
+    "new_url", ["wss://new.example/ocpp", "wss://old.example:8443/ocpp", "ws://old.example/ocpp", "ws://[::1/ocpp"]
+)
 async def test_new_server_does_not_inherit_the_stored_password(hass: HomeAssistant, new_url: str) -> None:
     stored = {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror", CONF_VENDOR_PASSWORD: "s3cret"}
     entry = _entry(hass, stored)

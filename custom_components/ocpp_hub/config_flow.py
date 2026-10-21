@@ -22,12 +22,13 @@ ERROR_FIELDS = {
 }
 
 
-# Whether two vendor addresses point at the same host and port; an address that cannot be read matches nothing.
-# A stored password may only follow an address to the same server: it must never be sent to a new one unasked.
+# Whether two vendor addresses use the same scheme, host and port; an address that cannot be read matches nothing.
+# A stored password may only follow an address to the same server: it must never be sent to a new one unasked, nor
+# over ws:// when it was stored for wss://.
 def _same_server(first: str, second: str) -> bool:
     try:
         a, b = urlsplit(first), urlsplit(second)
-        return bool(a.hostname) and (a.hostname, a.port) == (b.hostname, b.port)
+        return bool(a.hostname) and (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
     except ValueError:
         return False
 
