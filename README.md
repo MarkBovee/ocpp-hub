@@ -2,7 +2,7 @@
 
 A Home Assistant integration that acts as the local OCPP 1.6 backend of your EV charger, and can pass a read-only copy of everything the charger says on to the manufacturer's own backend.
 
-> **Status: early.** The OCPP server, the entities and the vendor mirror are built and tested against a fake charger and a fake vendor backend. None of it has run against a real charger and a real vendor backend yet, and nothing writes to a charger: there are no limit or start/stop controls. The changelog says what each release really does.
+> **Status: early.** The OCPP server and the entities run against a real Raedian NEO. The vendor mirror is tested against a fake vendor backend only; it has not yet connected to the real one, because that backend's address is not public. Nothing writes to a charger apart from two metering settings: there are no limit or start/stop controls. The changelog says what each release really does.
 
 ## Why
 
@@ -15,6 +15,12 @@ A charger talks to one OCPP backend at a time. Point it at Home Assistant and th
 - Stays local: no cloud service of ours is involved.
 
 Still to come: a charge limit and start/stop through `number` and `switch` entities. Writing to a charger needs the owner's explicit approval for each kind of write, so it is not built until that is given.
+
+## What happens when a charger connects
+
+The hub answers the charger and creates a device and its entities once the charger has sent its `BootNotification`. A charger that reconnects after Home Assistant restarted often sends neither a boot nor a status, so after fifteen seconds the hub asks for them with `TriggerMessage`. It then reads a few configuration keys, one key per request because some chargers ignore a request that names several, and makes sure the charger reports the meter values the entities need (`MeterValuesSampledData` and `MeterValueSampleInterval`; those two are the only things the hub writes to a charger). Home Assistant shows a notification with the charger's manufacturer, type, firmware, serial number and OCPP version.
+
+When the integration stops, the hub drops the charger's connections instead of closing them. The Raedian NEO stays away for minutes after a proper close, whatever the close code, and is back within about half a minute after a connection that simply vanishes.
 
 ## Entities
 
