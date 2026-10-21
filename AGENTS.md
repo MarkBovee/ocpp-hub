@@ -29,6 +29,7 @@
 - Use Home Assistant through HA-MCP first (`ha_get_overview`, `ha_get_integration`, `ha_get_logs`, `ha_get_system_health`). Use SSH only for the documented deploy.
 - Approvals do not carry over: deploying, restarting Home Assistant, pushing, tagging, posting on GitHub and any charger write are separate outward actions.
 - Write user-facing text (README, changelog, release notes, issue replies) in plain, human English with exact identifiers and commands. Draft GitHub replies as Markdown and post them only after the owner approved the text.
+- Language: talk to the owner in Dutch; he prefers it. Everything the project ships is English, to reach a wider audience: code, comments, commits, documentation, interface strings and notifications. English is the source language of the translations; Dutch (`nl.json`) is a welcome extra when it is cheap, and nothing waits for it.
 
 ## Code rules
 
