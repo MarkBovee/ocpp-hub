@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,7 +15,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from . import commands
 from .control import ChargerControl, ControlPolicy
 from .frames import Frame
-from .model import ChargerSnapshot, ChargeSession, ConnectorState
+from .model import ChargerSnapshot, ChargeSession, ConnectorState, LimitMemory
 from .session import ChargerSession, SessionListener, SessionSettings
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ class CentralSystem:
         self._open_charges: dict[str, dict[int, ConnectorState]] = {}
         # The limit the hub set on a charger, as (amps, purpose), until the charger comes back. A station profile stays
         # in the charger when the link drops, so it must stay visible; a charge profile ends with its charge.
-        self._limits: dict[str, tuple[float | None, str | None]] = {}
+        self._limits: dict[str, LimitMemory] = {}
 
     @property
     def port(self) -> int:
@@ -100,12 +101,44 @@ class CentralSystem:
         self._transaction_counter += 1
         return self._transaction_counter
 
-    # Keep the station-wide limit of a connection that ended, to show it on the next one; forget anything else.
+    # Keep the limits of a connection that ended, to show them on the next one. A profile for one charge ends with that
+    # charge, so only the station-wide and default profiles are kept, for the hub's own limit and the vendor's alike.
     def _remember_limit(self, cp_id: str, snapshot: ChargerSnapshot) -> None:
-        if snapshot.charge_limit_a is not None and snapshot.limit_purpose == commands.PURPOSE_CHARGE_POINT_MAX:
-            self._limits[cp_id] = (snapshot.charge_limit_a, snapshot.limit_purpose)
-        else:
+        lasting = (commands.PURPOSE_CHARGE_POINT_MAX, commands.PURPOSE_TX_DEFAULT)
+        hub = snapshot.limit_purpose in lasting
+        vendor = snapshot.vendor_purpose in lasting
+        memory = LimitMemory(
+            hub_a=snapshot.charge_limit_a if hub else None,
+            hub_purpose=snapshot.limit_purpose if hub else None,
+            vendor_a=snapshot.vendor_limit_a if vendor else None,
+            vendor_profile_id=snapshot.vendor_profile_id if vendor else None,
+            vendor_purpose=snapshot.vendor_purpose if vendor else None,
+            hub_restored=hub and snapshot.hub_limit_restored,
+            vendor_restored=vendor and snapshot.vendor_limit_restored,
+        )
+        if memory.empty:
             self._limits.pop(cp_id, None)
+        else:
+            self._limits[cp_id] = memory
+
+    # Add listeners after construction; the Home Assistant layer needs the central system before it can build its own.
+    def add_listeners(self, listeners: Sequence[SessionListener]) -> None:
+        self._listeners.extend(listeners)
+
+    # Seed the limits from storage after a restart, so they show again before the charger has said anything.
+    def restore_limits(self, limits: dict[str, LimitMemory]) -> None:
+        self._limits.update(
+            {
+                cp_id: replace(
+                    memory, hub_restored=memory.hub_a is not None, vendor_restored=memory.vendor_a is not None
+                )
+                for cp_id, memory in limits.items()
+            }
+        )
+
+    # The limit that is remembered for a charger, for storage.
+    def limit_memory(self, cp_id: str) -> LimitMemory:
+        return self._limits.get(cp_id, LimitMemory())
 
     # Handle one incoming charger connection until it ends.
     # The identity is the last path segment of the URL; a connection without identity or protocol is refused.
@@ -135,7 +168,7 @@ class CentralSystem:
             self._settings,
             self._clock,
             resume,
-            self._limits.get(cp_id, (None, None)),
+            self._limits.get(cp_id),
         )
         self._sessions[cp_id] = session
         _LOGGER.info("Charger %s connected (%s)", cp_id, protocol)

@@ -75,3 +75,9 @@ def remote_start_transaction(id_tag: str, connector_id: int | None = None) -> di
 # The charger identifies the session by the transaction id the hub handed out.
 def remote_stop_transaction(transaction_id: int) -> dict[str, Any]:
     return {"transactionId": transaction_id}
+
+
+# Build GetCompositeSchedule: ask what limit is in effect now on a connector, in amperes. It only reads.
+# The charger combines all its profiles, so the answer is what really applies, whoever set it.
+def get_composite_schedule(connector_id: int, duration_s: int = 3600) -> dict[str, Any]:
+    return {"connectorId": connector_id, "duration": duration_s, "chargingRateUnit": "A"}

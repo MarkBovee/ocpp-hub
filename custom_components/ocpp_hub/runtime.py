@@ -13,12 +13,13 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.translation import async_get_translations
 
 from .const import DOMAIN, PACKAGE_LOGGER, charger_notification_id, new_charger_signal, session_signal, snapshot_signal
+from .core import commands
 from .core.central import CentralSystem
 from .core.frames import Frame
 from .core.mirror import VendorMirror
-from .core.model import ChargerSnapshot, ChargeSession
+from .core.model import ChargerSnapshot, ChargeSession, LimitMemory
 from .core.session import ChargerSession
-from .session_store import SessionStore
+from .session_store import LimitStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 # The raw OCPP frames, at debug level only; a frame can hold an id tag or a serial number, so it is off by default.
@@ -46,10 +47,19 @@ class HubListener:
 
     # Keep what is needed to send signals; nothing is sent before the first charger connects.
     def __init__(
-        self, hass: HomeAssistant, entry_id: str, build: str, sessions: SessionStore, mirror_enabled: bool = False
+        self,
+        hass: HomeAssistant,
+        entry_id: str,
+        build: str,
+        sessions: SessionStore,
+        limits: LimitStore,
+        mirror_enabled: bool = False,
     ) -> None:
         self._hass = hass
         self._sessions = sessions
+        self._limits = limits
+        # What was last handed to storage per charger, so nothing is written when nothing changed.
+        self._saved_limits: dict[str, LimitMemory] = {}
         self._entry_id = entry_id
         self._build = build
         self._mirror_enabled = mirror_enabled
@@ -72,6 +82,7 @@ class HubListener:
     # snapshot itself, so its entities exist and start from the stored state.
     def on_snapshot(self, snapshot: ChargerSnapshot) -> None:
         self.snapshots[snapshot.cp_id] = snapshot
+        self._save_limits(snapshot)
         if snapshot.cp_id not in self._announced and _has_booted(snapshot):
             self._announced.add(snapshot.cp_id)
             _LOGGER.info(
@@ -87,6 +98,31 @@ class HubListener:
             self._notified.add(snapshot.cp_id)
             self._hass.async_create_task(self._notify_connected(snapshot))
         async_dispatcher_send(self._hass, snapshot_signal(self._entry_id, snapshot.cp_id), snapshot)
+
+    # Save the limits of a charger when they changed, so they survive a restart. Only the lasting ones are kept (the
+    # central system filters out a profile that ends with its charge), and nothing is written when nothing changed.
+    def _save_limits(self, snapshot: ChargerSnapshot) -> None:
+        current = LimitMemory(
+            hub_a=snapshot.charge_limit_a,
+            hub_purpose=snapshot.limit_purpose,
+            vendor_a=snapshot.vendor_limit_a,
+            vendor_profile_id=snapshot.vendor_profile_id,
+            vendor_purpose=snapshot.vendor_purpose,
+        )
+        if not snapshot.connected or self._saved_limits.get(snapshot.cp_id) == current:
+            return
+        self._saved_limits[snapshot.cp_id] = current
+        lasting = (commands.PURPOSE_CHARGE_POINT_MAX, commands.PURPOSE_TX_DEFAULT)
+        self._limits.update(
+            snapshot.cp_id,
+            LimitMemory(
+                hub_a=current.hub_a if current.hub_purpose in lasting else None,
+                hub_purpose=current.hub_purpose if current.hub_purpose in lasting else None,
+                vendor_a=current.vendor_a if current.vendor_purpose in lasting else None,
+                vendor_profile_id=current.vendor_profile_id if current.vendor_purpose in lasting else None,
+                vendor_purpose=current.vendor_purpose if current.vendor_purpose in lasting else None,
+            ),
+        )
 
     # Tell the owner that a charger connected: who it is and what it speaks, in the language of the instance.
     # The notification has a fixed id per charger, so a reconnect updates it instead of piling up new ones.
@@ -144,6 +180,7 @@ class HubRuntime:
     listener: HubListener
     mirror: VendorMirror | None
     sessions: SessionStore
+    limits: LimitStore
 
 
 type OcppHubConfigEntry = ConfigEntry[HubRuntime]

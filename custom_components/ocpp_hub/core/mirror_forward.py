@@ -195,3 +195,24 @@ def _plan_configuration(payload: dict[str, Any]) -> Forward | Refuse:
     if not isinstance(value, str) or len(value) > _MAX_VALUE:
         return Refuse(refusal_for("ChangeConfiguration"), "the value is not a short text")
     return Forward("ChangeConfiguration", payload)
+
+
+# The lowest limit of a vendor profile in amperes: the number that is shown as the vendor's limit. A profile in watts is
+# converted with its number of phases. None when the profile has no usable period; the profile was checked before it was
+# passed on, so this only reads it.
+def profile_limit_a(profile: object) -> float | None:
+    schedule = profile.get("chargingSchedule") if isinstance(profile, dict) else None
+    periods = schedule.get("chargingSchedulePeriod") if isinstance(schedule, dict) else None
+    if not isinstance(schedule, dict) or not isinstance(periods, list):
+        return None
+    amps: list[float] = []
+    for period in periods:
+        limit = period.get("limit") if isinstance(period, dict) else None
+        if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit):
+            continue
+        phases = period.get("numberPhases", _DEFAULT_PHASES)
+        if schedule.get("chargingRateUnit") == "W":
+            amps.append(limit / (_NOMINAL_VOLTS * (phases if isinstance(phases, int) and phases else _DEFAULT_PHASES)))
+        else:
+            amps.append(float(limit))
+    return min(amps) if amps else None

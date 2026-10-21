@@ -44,6 +44,15 @@ A charge starts at the charger's `StartTransaction` and ends at its `StopTransac
 
 Every finished charge is kept in Home Assistant's storage, with no limit (about 300 bytes each), and survives restarts. The service `ocpp_hub.get_sessions` returns the whole history, newest first, optionally for one `charger_id` and limited by `limit`. A charge that was running while Home Assistant restarted is not recorded: the hub does not know its start. The energy of a charge is the meter at the stop minus the meter at the start; if the charger sends no stop reading, the last meter value is used.
 
+## Limits in Home Assistant and at the vendor
+
+Two parties can limit a charger: Home Assistant (the charge limit number) and the vendor's app. The charger applies the lower of the two, so the limit you set in Home Assistant is also a ceiling over what the vendor's app can ask for.
+
+- **Home Assistant to charger and vendor.** The number sends the limit to the charger. The vendor sees the effect in the offered current of the meter values the mirror forwards, and when it asks for the composite schedule (`GetCompositeSchedule`) it is answered with the limit in effect, whether or not commands are passed on.
+- **Vendor app to Home Assistant and charger.** A limit set in the vendor's app is a `SetChargingProfile` command. With *Commands from the backend* set to *Pass them on to the charger* it reaches the charger (under your ceiling) and is shown as the `vendor_limit_a` attribute of the charge limit number and of `_limit_in_effect`. With the setting on *Refuse them* the command is refused and nothing changes.
+- **`_limit_in_effect`** shows the limit that applies now. After every change the hub asks the charger what is in effect (`GetCompositeSchedule`, a read) and shows its answer (`source: charger`); a charger that cannot say leaves the lowest of the limits the hub knows (`source: calculated`).
+- **Saved in Home Assistant.** The limits survive a restart: the number and `_limit_in_effect` show them again as soon as the charger connects, before it has said anything. A profile that belongs to one charge ends with that charge and is not kept. A restored limit is marked `restored_unconfirmed` until the charger confirms it: when the charger answers the composite schedule, a stored limit that it does not show is dropped (the charger may have rebooted, or the vendor may have changed it), and while it is unconfirmed the vendor is not told about it. A charger that cannot answer leaves the stored value shown with that mark, so check it in the vendor app or set the limit again. A charge profile or a changed charge also clears what the charger reported before, so a pause that ended with its charge does not linger.
+
 ## Vendor mirror
 
 Open the integration's options and fill in:

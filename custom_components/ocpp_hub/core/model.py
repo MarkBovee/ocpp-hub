@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+# The highest current per phase a stored or reported limit may have; no charger offers more.
+MAX_STORED_LIMIT_A = 80.0
 
 # Key used for a measurement that has no phase (the total, or a single-phase charger).
 PHASE_TOTAL = "total"
@@ -97,6 +101,22 @@ class ChargerSnapshot:
     # none on this connection. The charger is not asked what it holds, so this is what the hub knows it wrote.
     charge_limit_a: float | None = None
     limit_purpose: str | None = None
+    # The limit the vendor backend set through a command that was passed on (the lowest limit of its profile), the id of
+    # that profile and its purpose. A charge profile of the vendor ends with its charge.
+    vendor_limit_a: float | None = None
+    vendor_profile_id: int | None = None
+    vendor_purpose: str | None = None
+    # What the charger itself says is in effect right now, from GetCompositeSchedule; None when it cannot say.
+    composite_limit_a: float | None = None
+    # True while the hub's (or the vendor's) limit above comes from storage and the charger has not confirmed it: the
+    # charger may have lost it (a reboot) or the vendor may have changed it while Home Assistant was down.
+    hub_limit_restored: bool = False
+    vendor_limit_restored: bool = False
+
+    @property
+    def limits_restored(self) -> bool:
+        """True while any limit shown is only the stored one."""
+        return self.hub_limit_restored or self.vendor_limit_restored
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,4 +184,60 @@ class ChargeSession:
             offered_a=data.get("offered_a"),
             limit_a=data.get("limit_a"),
             stop_reason=data.get("stop_reason"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LimitMemory:
+    """The limits that survive a reconnect or a restart: the hub's own and the vendor's, as far as the hub knows."""
+
+    hub_a: float | None = None
+    hub_purpose: str | None = None
+    vendor_a: float | None = None
+    vendor_profile_id: int | None = None
+    vendor_purpose: str | None = None
+    # Set on a side that was read from storage and not yet confirmed by the charger; never stored itself.
+    hub_restored: bool = False
+    vendor_restored: bool = False
+
+    @property
+    def empty(self) -> bool:
+        """True when there is nothing to remember."""
+        return self.hub_a is None and self.vendor_a is None
+
+    # The memory as plain JSON values.
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "hub_a": self.hub_a,
+            "hub_purpose": self.hub_purpose,
+            "vendor_a": self.vendor_a,
+            "vendor_profile_id": self.vendor_profile_id,
+            "vendor_purpose": self.vendor_purpose,
+        }
+
+    # Rebuild the memory from what to_dict wrote; a record with the wrong types raises, so the caller can skip it.
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> LimitMemory:
+        # A stored current as a float, or None when it is missing. A value that is not finite, negative or beyond any
+        # charger raises, so damaged storage never reaches the screen or the vendor.
+        def number(key: str) -> float | None:
+            value = data.get(key)
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{key} is not a number")
+            if not math.isfinite(value) or not 0 <= value <= MAX_STORED_LIMIT_A:
+                raise ValueError(f"{key} is outside what a charger can have")
+            return float(value)
+
+        if not isinstance(data, Mapping):
+            raise TypeError("a limit record must be an object")
+
+        profile_id = data.get("vendor_profile_id")
+        return cls(
+            hub_a=number("hub_a"),
+            hub_purpose=data.get("hub_purpose"),
+            vendor_a=number("vendor_a"),
+            vendor_profile_id=int(profile_id) if profile_id is not None else None,
+            vendor_purpose=data.get("vendor_purpose"),
         )

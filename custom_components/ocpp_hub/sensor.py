@@ -140,6 +140,7 @@ async def async_setup_entry(
         entities: list[OcppHubEntity] = [
             ChargerSensor(runtime, entry.entry_id, cp_id, description) for description in CHARGER_SENSORS
         ]
+        entities.append(LimitInEffectSensor(runtime, entry.entry_id, cp_id))
         entities.append(CurrentSessionSensor(runtime, entry.entry_id, cp_id))
         entities.append(LastSessionSensor(runtime, entry.entry_id, cp_id))
         if runtime.mirror is not None:
@@ -198,6 +199,40 @@ def _session_attributes(session: ChargeSession) -> dict[str, Any]:
         "id_tag": session.id_tag,
         "stop_reason": session.stop_reason,
     }
+
+
+class LimitInEffectSensor(OcppHubEntity, SensorEntity):
+    """The current limit that applies to the charger now, whoever set it, with the limits it comes from as attributes.
+
+    The charger applies the lower of the hub's limit and the vendor's. When the charger can say what is in effect (the
+    "charger" source) that is shown; otherwise the lowest of the limits the hub knows (the "calculated" source).
+    """
+
+    _attr_translation_key = "limit_in_effect"
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    # Build the sensor for one charger.
+    def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
+        super().__init__(runtime, entry_id, cp_id, "sensor", "limit_in_effect")
+
+    @property
+    def native_value(self) -> float | None:
+        """The limit in amperes, or None when none is known."""
+        return readings.effective_limit_a(self._snapshot)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """Where the number comes from: the hub's limit, the vendor's limit and what the charger itself reported."""
+        snapshot = self._snapshot
+        return {
+            "hub_limit_a": snapshot.charge_limit_a,
+            "vendor_limit_a": snapshot.vendor_limit_a,
+            "charger_reported_a": snapshot.composite_limit_a,
+            "source": "charger" if snapshot.composite_limit_a is not None else "calculated",
+            "restored_unconfirmed": snapshot.limits_restored,
+        }
 
 
 class CurrentSessionSensor(OcppHubEntity, SensorEntity):

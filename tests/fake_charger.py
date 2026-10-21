@@ -25,6 +25,9 @@ class FakeCharger:
         self.url = f"ws://127.0.0.1:{port}/{cp_id}"
         self.subprotocol = subprotocol
         self.hub_calls: asyncio.Queue[list[Any]] = asyncio.Queue()
+        # Answer GetCompositeSchedule by itself: with an error, or with this limit in amperes when it is set.
+        self.answer_composite = True
+        self.composite_limit: float | None = None
         self._results: dict[str, asyncio.Future[list[Any]]] = {}
         self._connection: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -86,13 +89,27 @@ class FakeCharger:
     async def boot(self, **overrides: Any) -> list[Any]:
         return await self.call("BootNotification", {**NEO_BOOT, **overrides})
 
+    # The answer to a GetCompositeSchedule: the limit that was set for it, or a CALLERROR as a charger without support.
+    def _composite_reply(self, frame: list[Any]) -> list[Any]:
+        if self.composite_limit is None:
+            return [4, frame[1], "NotSupported", "", {}]
+        schedule = {
+            "chargingRateUnit": "A",
+            "chargingSchedulePeriod": [{"startPeriod": 0, "limit": self.composite_limit}],
+        }
+        return [3, frame[1], {"status": "Accepted", "connectorId": 1, "chargingSchedule": schedule}]
+
     # Read frames from the hub: results resolve waiting calls, requests go to the queue.
     async def _read(self) -> None:
         assert self._connection is not None
         try:
             async for message in self._connection:
                 frame = json.loads(message)
-                if frame[0] == 2:
+                if frame[0] == 2 and frame[2] == "GetCompositeSchedule" and self.answer_composite:
+                    # The hub reads the limit in effect after every write. Most tests are not about that, so it is
+                    # answered at once, as a charger that cannot do it would; a test sets composite_limit to see it.
+                    await self._connection.send(json.dumps(self._composite_reply(frame)))
+                elif frame[0] == 2:
                     self.hub_calls.put_nowait(frame)
                 elif frame[1] in self._results and not self._results[frame[1]].done():
                     self._results[frame[1]].set_result(frame)

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Limits: the limit Home Assistant set and the one the vendor's app set (when commands are passed on) are saved and shown again after a restart, `_limit_in_effect` shows the limit that applies (asked from the charger with `GetCompositeSchedule`), and the vendor is answered with it when it asks for the composite schedule.
+
 - New entities from the status the charger already reports: `plugged_in`, `car_charging`, `problem` and the diagnostic `error_code`.
 - Raw OCPP frames are written to the log when the logger `custom_components.ocpp_hub.frames` is set to debug (off by default).
 

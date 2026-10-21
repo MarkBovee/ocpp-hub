@@ -118,6 +118,9 @@
       },
       "mirror_queue": {
         "name": "Mirror queue"
+      },
+      "limit_in_effect": {
+        "name": "Limit in effect"
       }
     },
     "binary_sensor": {
