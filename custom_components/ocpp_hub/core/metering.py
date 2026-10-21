@@ -100,3 +100,19 @@ def parse_meter_values(payload: dict[str, Any], now: datetime) -> MeterSample | 
         voltage_v=voltages,
         current_offered_a=offered,
     )
+
+
+# Combine a new reading with the previous one: what the new reading lacks is kept from the old one.
+# The NEO sends a reading with only the energy register on the clock (12:00, 12:30 and so on); replacing the whole
+# reading with it made power, currents and the offered current vanish for fifteen seconds at a time.
+def merge_samples(previous: MeterSample | None, new: MeterSample) -> MeterSample:
+    if previous is None:
+        return new
+    return MeterSample(
+        sampled_at=new.sampled_at,
+        power_w=new.power_w if new.power_w is not None else previous.power_w,
+        energy_wh=new.energy_wh if new.energy_wh is not None else previous.energy_wh,
+        current_a={**previous.current_a, **new.current_a},
+        voltage_v={**previous.voltage_v, **new.voltage_v},
+        current_offered_a=new.current_offered_a if new.current_offered_a is not None else previous.current_offered_a,
+    )

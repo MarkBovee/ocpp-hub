@@ -17,6 +17,8 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 - [x] Vendor mirror against the real Raedian backend: `wss://cloud-protocol.raedian.com:9043/ocpp/`, no credentials; the mirror shows connected and the Raedian app shows the charger online (2026-10-21).
 - [x] Independent review and audit of the engine and of the Home Assistant layer, P0 and P1 findings fixed with a test each.
 
+- [x] First real charge with a car (2026-10-21): the NEO obeyed a 6 A station profile (5.9 A per phase, about 4.05 kW), reported preparing, charging, suspended by the car, finishing and available, and the charge was stored with its numbers (5.0 kWh in 84 minutes, stopped by the car being unplugged).
+
 ## In progress
 
 - [~] Charge sessions: live session sensors, an unbounded stored history, `_last_session` with the newest charges, the service `ocpp_hub.get_sessions`, and a ready dashboard (`docs/dashboard.md`). Tested with a fake charger; not yet seen with a real charge.
@@ -25,7 +27,8 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 
 ## Open
 
-- [ ] Watch a real charge, read-only: what the NEO sends for `StartTransaction`, `MeterValues` (interval, measurands), `StopTransaction` (reason) and whether the status change reaches the vendor. The session code assumes standard OCPP 1.6 until this is seen.
+- [ ] Check the vendor side of a real charge: that the status changes and the charge show up in the Raedian app, and what the vendor sends back.
+- [ ] Log raw frames at debug level, to see every measurand and field the NEO sends, and decide from that which further entities are worth making.
 - [ ] Measure a full restart of Home Assistant (a reload is measured: 14 seconds).
 - [ ] Remember the charge limit the hub set across a restart of Home Assistant (today it survives a reconnect only; the clear button removes the hub's profile).
 - [ ] Persist the mirror queue and a charge that is running across a restart of Home Assistant (today both are lost; documented in the README).
@@ -33,6 +36,7 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 - [ ] Make the repository public, switch on HACS validation, tag a release. Version and changelog are still `0.1.0` / unreleased.
 - [ ] Remove the unused add-on copy on the Home Assistant server (needs the owner's yes).
 - [ ] Option to switch off the connect notification.
+- [ ] Further entities from data the hub already has: plugged in, car charging, problem and the connector error code.
 
 ## Known small follow-ups (P2)
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Session information lives with the session: one `_current_session` sensor (energy so far, with start, duration, tag, peak and average power, highest current per phase, offered current and the hub's limit as attributes) replaces the three loose session sensors, and every stored charge now carries the same numbers.
+- Power and phase currents read 0 instead of unknown while the socket delivers nothing, and a reading that carries only the energy register no longer erases the rest.
+- Removed the `model`, `firmware` and `mirror_queue` sensors: the first two are on the device, the queue length is an attribute of the mirror status. Their old registry entries are removed at setup.
+
 - Option *Commands from the backend*: pass the vendor's commands on to the charger (off by default). Reset, firmware and diagnostics stay refused; a profile above your current ceiling and configuration keys that could cut the hub off are refused too. Logged with `[forward]`.
 - A button *Clear charge limit* removes the hub's profile from the charger.
 

@@ -10,9 +10,17 @@ cards:
     entities:
       - entity: sensor.ocpp_hub_charger1_status
       - entity: sensor.ocpp_hub_charger1_power
-      - entity: sensor.ocpp_hub_charger1_session_energy
-      - entity: sensor.ocpp_hub_charger1_session_duration
-      - entity: sensor.ocpp_hub_charger1_session_started
+      - entity: sensor.ocpp_hub_charger1_current_session
+      - type: attribute
+        entity: sensor.ocpp_hub_charger1_current_session
+        attribute: duration_s
+        name: Seconds so far
+        suffix: s
+      - type: attribute
+        entity: sensor.ocpp_hub_charger1_current_session
+        attribute: max_power_w
+        name: Peak power
+        suffix: W
   - type: history-graph
     title: Power and current
     hours_to_show: 6

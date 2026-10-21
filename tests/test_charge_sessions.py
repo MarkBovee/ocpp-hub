@@ -64,6 +64,7 @@ async def test_a_finished_charge_is_reported_with_its_numbers(start_hub) -> None
             meter_stop_wh=4000.0,
             energy_wh=3000.0,
             max_power_w=7000.0,
+            average_power_w=5500.0,
             stop_reason="EVDisconnected",
         )
     ]
@@ -132,7 +133,7 @@ async def test_a_charge_survives_a_reconnect_of_the_charger(start_hub) -> None:
         {"transactionId": started[2]["transactionId"], "meterStop": 3000, "timestamp": "2026-10-21T08:30:00Z"},
     )
 
-    assert resumed.transaction_id == started[2]["transactionId"] and resumed.max_power_w == 5000.0
+    assert resumed.transaction_id == started[2]["transactionId"] and resumed.stats.max_power_w == 5000.0
     assert len(hub.listener.finished) == 1
     assert hub.listener.finished[0].energy_wh == 2000.0 and hub.listener.finished[0].id_tag == "TAG1"
     assert hub.listener.finished[0].started_at == datetime(2026, 10, 21, 8, 0, tzinfo=UTC)
@@ -225,3 +226,74 @@ async def test_no_ghost_charge_after_a_reconnect_over_a_live_link(start_hub) -> 
 
     assert len(hub.listener.finished) == 1
     assert hub.listener.finished[0].transaction_id == started[2]["transactionId"]
+
+
+# Intent: a reading with only the energy register, as the NEO sends on the clock, does not erase the power, currents and
+# offered current of the reading before it.
+# Why: the history showed power and currents as unknown at 12:00:00 and 13:30:00 sharp; a partial reading replaced the
+# whole one.
+async def test_an_energy_only_reading_keeps_the_rest(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    full = _meter("2026-10-21T08:10:00Z", 2000, 4000)
+    full["meterValue"][0]["sampledValue"] += [
+        {"measurand": "Current.Import", "phase": "L1", "value": "5.9", "unit": "A"},
+        {"measurand": "Current.Offered", "value": "6", "unit": "A"},
+    ]
+    await charger.call("MeterValues", full)
+
+    await charger.call(
+        "MeterValues",
+        {
+            "connectorId": 1,
+            "meterValue": [
+                {
+                    "timestamp": "2026-10-21T08:30:00Z",
+                    "sampledValue": [{"measurand": "Energy.Active.Import.Register", "value": "2100", "unit": "Wh"}],
+                }
+            ],
+        },
+    )
+
+    meter = hub.listener.latest.meter
+    assert meter.energy_wh == 2100.0 and meter.power_w == 4000.0
+    assert meter.current_a == {"L1": 5.9} and meter.current_offered_a == 6.0
+
+
+# Intent: a finished charge carries its own numbers: the mean power over the power readings (an energy-only reading does
+# not dilute it), the highest current per phase and the highest offered current.
+# Why: the session record is where all session information lives; it must not be rebuilt from loose sensors later.
+async def test_a_finished_charge_carries_its_own_statistics(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    for stamp, power, amps in (("08:10:00", 4000, "5.9"), ("08:20:00", 3800, "5.95")):
+        reading = _meter(f"2026-10-21T{stamp}Z", 1000, power)
+        reading["meterValue"][0]["sampledValue"] += [
+            {"measurand": "Current.Import", "phase": "L1", "value": amps, "unit": "A"},
+            {"measurand": "Current.Offered", "value": "6", "unit": "A"},
+        ]
+        await charger.call("MeterValues", reading)
+        await charger.call(
+            "MeterValues",
+            {
+                "connectorId": 1,
+                "meterValue": [
+                    {
+                        "timestamp": f"2026-10-21T{stamp[:3]}30:00Z",
+                        "sampledValue": [{"measurand": "Energy.Active.Import.Register", "value": "1", "unit": "Wh"}],
+                    }
+                ],
+            },
+        )
+
+    await charger.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 2000, "timestamp": "2026-10-21T09:00:00Z"},
+    )
+
+    finished = hub.listener.finished[0]
+    assert finished.average_power_w == 3900.0 and finished.max_power_w == 4000.0
+    assert finished.max_current_a == {"L1": 5.95} and finished.offered_a == 6.0

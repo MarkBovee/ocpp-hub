@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -23,6 +24,7 @@ from .const import (
     DEFAULT_MAX_CURRENT,
     DOMAIN,
     PACKAGE_LOGGER,
+    RETIRED_ENTITY_KEYS,
     SERVICE_GET_SESSIONS,
 )
 from .core.central import CentralSystem
@@ -68,6 +70,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+# Remove the registry entries of entities that no longer exist. Home Assistant would otherwise keep them for ever as
+# "unavailable" entities that nothing updates.
+def _retire_entities(hass: HomeAssistant, entry: OcppHubConfigEntry) -> None:
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.unique_id.rsplit(":", 1)[-1] in RETIRED_ENTITY_KEYS:
+            registry.async_remove(entity.entity_id)
+
+
 # The ceiling for writes from the entry options. A value that cannot be right falls back to the default instead of
 # widening what is allowed; the error says so.
 def _control_policy(entry: OcppHubConfigEntry) -> ControlPolicy:
@@ -105,6 +116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     logging.getLogger(PACKAGE_LOGGER).setLevel(logging.INFO)
     build = await hass.async_add_executor_job(_read_build_stamp)
     settings = _mirror_settings(entry)
+    _retire_entities(hass, entry)
     sessions = SessionStore(hass)
     await sessions.async_load()
     listener = HubListener(hass, entry.entry_id, build, sessions, mirror_enabled=settings is not None)

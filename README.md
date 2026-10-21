@@ -32,11 +32,13 @@ When the integration stops, the hub drops the charger's connections instead of c
 
 ## Entities
 
-A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, `_model`, `_firmware`, and `binary_sensor.ocpp_hub_<charger id>_connected`. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, and `binary_sensor.ocpp_hub_<charger id>_connected`. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. The model and firmware are on the device, not separate sensors. While the socket is known not to deliver (any status except charging), power and the phase currents read 0 instead of unknown, because nothing flows; a phase that the meter leaves out while it reports others also reads 0. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+
+The NEO sends a reading with only the energy register on the clock (at 12:00, 12:30 and so on). The hub keeps what such a partial reading does not carry, so power and currents do not vanish for a moment.
 
 ## Charge sessions
 
-A charge starts at the charger's `StartTransaction` and ends at its `StopTransaction`. While it runs, `_session_energy` (kWh since the start), `_session_started` and `_session_duration` show it; when it ends they clear. `_last_session` holds the end time of the latest finished charge, with its energy, duration, peak power, tag and stop reason as attributes and the 20 newest charges in `recent_sessions`.
+A charge starts at the charger's `StartTransaction` and ends at its `StopTransaction`. All information about a charge belongs to the charge, not to loose sensors. While it runs, `_current_session` shows the energy since the start (kWh), with the start, duration, tag, transaction, peak and average power, the highest current per phase, the offered current and the limit the hub had set as attributes; it is empty when no charge runs. When the charge ends, the same numbers are stored with it. `_last_session` holds the end time of the latest finished charge with the same attributes plus the stop reason, and the 20 newest charges in `recent_sessions`.
 
 Every finished charge is kept in Home Assistant's storage, with no limit (about 300 bytes each), and survives restarts. The service `ocpp_hub.get_sessions` returns the whole history, newest first, optionally for one `charger_id` and limited by `limit`. A charge that was running while Home Assistant restarted is not recorded: the hub does not know its start. The energy of a charge is the meter at the stop minus the meter at the start; if the charger sends no stop reading, the last meter value is used.
 
@@ -48,7 +50,7 @@ Open the integration's options and fill in:
 - **Raedian (NEO and other Raedian chargers):** use `wss://cloud-protocol.raedian.com:9043/ocpp/` and leave user name and password empty. The port is 9043; the installer app hides the address of its default profile, and port 443 does not answer. Verified on a NEO 22 kW: the vendor accepts the connection and its app shows the charger as online.
 - **User name and password:** only if the backend asks for them. They are sent as HTTP Basic authentication; the password field never shows what is stored, and an empty field keeps it.
 
-Per charger there are two diagnostic sensors, `_mirror_status` (idle, connecting or connected, with the last error and the counters as attributes) and `_mirror_queue` (frames waiting).
+Per charger there is one diagnostic sensor, `_mirror_status` (idle, connecting or connected, with the last error, the number of frames waiting and the counters as attributes).
 
 What the mirror does and does not do:
 

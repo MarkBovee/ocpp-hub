@@ -75,12 +75,6 @@
       "current_offered": {
         "name": "Aangeboden stroom"
       },
-      "model": {
-        "name": "Model"
-      },
-      "firmware": {
-        "name": "Firmware"
-      },
       "mirror_status": {
         "name": "Mirror naar leverancier",
         "state": {
@@ -89,20 +83,11 @@
           "connected": "Verbonden"
         }
       },
-      "mirror_queue": {
-        "name": "Wachtrij naar leverancier"
-      },
-      "session_energy": {
-        "name": "Sessie-energie"
-      },
-      "session_started": {
-        "name": "Sessie gestart"
-      },
-      "session_duration": {
-        "name": "Sessieduur"
-      },
       "last_session": {
         "name": "Laatste sessie"
+      },
+      "current_session": {
+        "name": "Huidige sessie"
       }
     },
     "binary_sensor": {

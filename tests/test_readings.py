@@ -63,7 +63,7 @@ def test_meter_readings_and_their_units() -> None:
     empty = _snapshot()
 
     assert readings.power_w(snapshot) == 7400.0 and readings.energy_kwh(snapshot) == 1234.567
-    assert readings.phase_current_a(snapshot, "L2") == 11.5 and readings.phase_current_a(snapshot, "L3") is None
+    assert readings.phase_current_a(snapshot, "L2") == 11.5 and readings.phase_current_a(snapshot, "L3") == 0.0
     assert readings.phase_voltage_v(snapshot, "L1") == 231.0 and readings.phase_voltage_v(snapshot, "L2") is None
     assert readings.current_offered_a(snapshot) == 16.0
     assert [
@@ -80,3 +80,20 @@ def test_meter_readings_and_their_units() -> None:
 def test_energy_without_a_value_and_rounding() -> None:
     assert readings.energy_kwh(_snapshot(power_w=1.0)) is None
     assert readings.energy_kwh(_snapshot(energy_wh=1000.0000000001)) == 1.0
+
+
+# Intent: while the socket is known not to deliver, power and every phase current read as zero; while it charges, a
+# phase the meter leaves out reads zero when other phases are reported; before any status the meter's values show.
+# Why: nothing flows when nothing charges, so zero is the fact and unknown is a gap; a missing phase of a one-phase car
+# is zero too, but without any status or any current there is nothing to claim.
+def test_zero_when_nothing_flows_and_unknown_only_when_nothing_is_known() -> None:
+    idle = _snapshot("Available", power_w=4000.0, current_a={"L1": 5.9})
+    charging = _snapshot("Charging", power_w=4000.0, current_a={"L1": 5.9})
+    no_status = _snapshot(None, power_w=4000.0)
+    no_current = _snapshot("Charging", power_w=4000.0)
+
+    assert readings.power_w(idle) == 0.0 and readings.phase_current_a(idle, "L1") == 0.0
+    assert readings.power_w(charging) == 4000.0 and readings.phase_current_a(charging, "L1") == 5.9
+    assert readings.phase_current_a(charging, "L2") == 0.0
+    assert readings.power_w(no_status) == 4000.0
+    assert readings.phase_current_a(no_current, "L1") is None
