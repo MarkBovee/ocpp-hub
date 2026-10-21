@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -28,6 +28,7 @@ from .frames import (
 )
 from .metering import parse_meter_values
 from .model import ChargerInfo, ChargerSnapshot, ConnectorState
+from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,8 +99,16 @@ class SessionSettings:
 
     heartbeat_interval_s: int = 300
     call_timeout_s: float = 15.0
-    # A charger that has just connected ignores requests for a while, so setup waits this long.
-    setup_delay_s: float = 5.0
+    # A charger that has just connected ignores requests for a while (the NEO for about ten seconds, and a first
+    # request at five seconds was never answered), so setup waits this long before its first try.
+    setup_delay_s: float = 15.0
+    # How long setup waits before each further try when the charger did not answer; no more tries after the last one.
+    setup_retry_delays_s: tuple[float, ...] = (30.0, 60.0, 120.0, 300.0)
+    # A charger that reconnects after the hub restarted often sends no BootNotification and no StatusNotification,
+    # because the hub accepted it before. After this wait the hub asks for them itself.
+    boot_wait_s: float = 15.0
+    # How long the hub lets a requested BootNotification arrive before it judges what is still missing.
+    trigger_settle_s: float = 3.0
     meter_sample_interval_s: int = 15
     measurands: str = "Energy.Active.Import.Register,Power.Active.Import,Current.Import,Voltage,Current.Offered"
 
@@ -135,6 +144,10 @@ class ChargerSession:
         self._pending: dict[str, asyncio.Future[Frame]] = {}
         self._call_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
+        # The setup that is running for this connection, so another boot does not start a second one.
+        self._setup_task: asyncio.Task[None] | None = None
+        # Metering settings the charger rejected on this connection; they are not offered again.
+        self._rejected_keys: set[str] = set()
         self._snapshot = ChargerSnapshot(cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock())
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
@@ -164,6 +177,7 @@ class ChargerSession:
     async def run(self) -> None:
         self._listener.on_connected(self)
         self._listener.on_snapshot(self._snapshot)
+        self._start_task(self._ask_for_introduction())
         try:
             async for message in self._connection:
                 await self._handle_message(message)
@@ -184,6 +198,14 @@ class ChargerSession:
     async def close(self) -> None:
         await self._connection.close()
 
+    # Drop the connection without a closing handshake, the way a crash or a restart of Home Assistant would.
+    # The Raedian NEO stays away for minutes after a proper close, whatever the close code (1000, 1001 and 1012 were all
+    # tried live), and is back within half a minute when the connection simply vanishes.
+    def abort(self) -> None:
+        transport = getattr(self._connection, "transport", None)
+        if transport is not None:
+            transport.abort()
+
     # Send a request to the charger and return the payload of its answer.
     # One request at a time per direction is a protocol rule, so calls are serialised with a lock.
     async def call(self, action: str, payload: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
@@ -196,6 +218,8 @@ class ChargerSession:
                 frame = await asyncio.wait_for(future, timeout or self._settings.call_timeout_s)
             except TimeoutError:
                 raise CallTimeoutError(f"{action} was not answered") from None
+            except ConnectionClosed as error:
+                raise CallError(f"{action} could not be sent: the connection closed") from error
             finally:
                 self._pending.pop(unique_id, None)
         if frame[0] == MSG_CALL_ERROR:
@@ -282,9 +306,8 @@ class ChargerSession:
             firmware=payload.get("firmwareVersion"),
         )
         self._update(info=info)
-        task = asyncio.get_running_loop().create_task(self._post_boot_setup())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        if self._setup_task is None or self._setup_task.done():
+            self._setup_task = self._start_task(self._post_boot_setup())
         return {"status": "Accepted", "currentTime": self._now_iso(), "interval": self._settings.heartbeat_interval_s}
 
     # Answer a heartbeat with the hub's time.
@@ -358,28 +381,95 @@ class ChargerSession:
     def _acknowledge(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {}
 
-    # After a charger booted: read its configuration and make sure it sends the meter values the hub needs.
-    # Failures are logged, not raised; the charger works without this and the next boot tries again.
-    async def _post_boot_setup(self) -> None:
-        await asyncio.sleep(self._settings.setup_delay_s)
-        try:
-            await self._read_configuration()
-            await self._ensure_metering()
-        except CallError as error:
-            _LOGGER.warning("Setup of charger %s did not complete: %s", self.cp_id, error)
+    # Run a coroutine in the background for as long as the connection lives.
+    # Tasks are cancelled when the connection ends, so none can outlive its session.
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        task = asyncio.get_running_loop().create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
-    # Read the configuration keys that decide what the hub can do and store them in the snapshot.
-    # SupportedFeatureProfiles tells whether smart charging is offered at all.
+    # Whether the charger has said who it is, in a BootNotification.
+    def _has_booted(self) -> bool:
+        info = self._snapshot.info
+        return info.vendor is not None or info.model is not None
+
+    # Ask the charger for the messages it did not send on its own after connecting: its boot, then its status.
+    # A charger that reconnects after the hub restarted usually skips both, so the hub would know neither the model nor
+    # the state. TriggerMessage is the standard way for a central system that joined late, and it only asks the charger
+    # to report; nothing on the charger changes. The charger ignores requests for a while after connecting, hence the
+    # wait, and an unanswered request is repeated like the setup is.
+    async def _ask_for_introduction(self) -> None:
+        delays = (self._settings.boot_wait_s, *self._settings.setup_retry_delays_s)
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+            try:
+                if not self._has_booted():
+                    await self.call("TriggerMessage", commands.trigger_message("BootNotification"))
+                    await asyncio.sleep(self._settings.trigger_settle_s)
+                if self._has_booted() and PRIMARY_CONNECTOR not in self._snapshot.connectors:
+                    await self.call("TriggerMessage", commands.trigger_message("StatusNotification", PRIMARY_CONNECTOR))
+            except CallError as error:
+                _LOGGER.warning(
+                    "Charger %s did not answer the request to introduce itself (try %s of %s): %s",
+                    self.cp_id,
+                    attempt,
+                    len(delays),
+                    error,
+                )
+                continue
+            if self._has_booted() and PRIMARY_CONNECTOR in self._snapshot.connectors:
+                _LOGGER.info("Charger %s introduced itself after being asked (try %s)", self.cp_id, attempt)
+                return
+
+    # After a charger booted: read its configuration and make sure it sends the meter values the hub needs.
+    # A charger that does not answer is asked again a few times; failures are logged, not raised, because the charger
+    # works without this and its next boot starts over.
+    async def _post_boot_setup(self) -> None:
+        delays = (self._settings.setup_delay_s, *self._settings.setup_retry_delays_s)
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+            try:
+                await self._read_configuration()
+                await self._ensure_metering()
+            except CallError as error:
+                _LOGGER.warning(
+                    "Setup of charger %s did not complete (try %s of %s): %s", self.cp_id, attempt, len(delays), error
+                )
+            else:
+                _LOGGER.info("Setup of charger %s completed on try %s", self.cp_id, attempt)
+                return
+        _LOGGER.warning("Giving up on the setup of charger %s until its next boot", self.cp_id)
+
+    # Read the configuration keys that decide what the hub can do and store them in the snapshot, one key per request.
+    # The Raedian NEO never answered a request that names several keys; it answers each key on its own, which is also
+    # how the reference implementation asks. SupportedFeatureProfiles tells whether smart charging is offered at all.
+    # Only the keys asked for are kept: some chargers answer with every key they have, and the snapshot is shown in
+    # diagnostics and to the vendor. A key that gets no answer is skipped; when no key was answered at all, the last
+    # error goes up so the whole setup is tried again later.
     async def _read_configuration(self) -> None:
-        answer = await self.call("GetConfiguration", commands.get_configuration(CONFIG_KEYS))
-        configuration = {
-            str(item["key"]): str(item.get("value", ""))
-            for item in answer.get("configurationKey", [])
-            if isinstance(item, dict) and "key" in item
-        }
-        profiles = configuration.get("SupportedFeatureProfiles", "")
-        features = frozenset(part.strip() for part in profiles.split(",") if part.strip())
-        self._update(configuration=configuration, features=features)
+        failure: CallError | None = None
+        answered = 0
+        for key in CONFIG_KEYS:
+            try:
+                answer = await self.call("GetConfiguration", commands.get_configuration([key]))
+            except CallError as error:
+                failure = error
+                continue
+            answered += 1
+            for item in answer.get("configurationKey", []):
+                if isinstance(item, dict) and item.get("key") == key:
+                    self._store_configuration(key, str(item.get("value", "")))
+        if failure is not None and answered == 0:
+            raise failure
+
+    # Add one configuration value to the snapshot, and the feature profiles it implies.
+    # Updating per key means a charger that answers only some keys still shows what it said.
+    def _store_configuration(self, key: str, value: str) -> None:
+        changes: dict[str, Any] = {"configuration": {**self._snapshot.configuration, key: value}}
+        if key == "SupportedFeatureProfiles":
+            changes["features"] = frozenset(part.strip() for part in value.split(",") if part.strip())
+        self._update(**changes)
 
     # Ask the charger to report the measurands the hub uses, at the configured interval, when it does not already.
     # A charger reports only what it is configured to, and the per-phase current is what load balancing needs.
@@ -389,8 +479,12 @@ class ChargerSession:
             "MeterValueSampleInterval": str(self._settings.meter_sample_interval_s),
         }
         for key, value in wanted.items():
+            if key in self._rejected_keys:
+                continue
             if key in self._snapshot.configuration and self._snapshot.configuration[key] != value:
                 answer = await self.call("ChangeConfiguration", commands.change_configuration(key, value))
                 _LOGGER.info("Charger %s: %s set to %s, answer %s", self.cp_id, key, value, answer.get("status"))
                 if answer.get("status") in ("Accepted", "RebootRequired"):
                     self._update(configuration={**self._snapshot.configuration, key: value})
+                else:
+                    self._rejected_keys.add(key)

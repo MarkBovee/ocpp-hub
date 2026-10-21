@@ -2,6 +2,11 @@ OCPP Hub builds on ideas and the snoop stream format of ha-ocpp-relay
 (https://github.com/michael-adler/ha-ocpp-relay), which is released under the MIT
 license reproduced below. Code adapted from that project keeps this notice.
 
+The way the hub treats a charger after it connects (asking a charger that sends no boot or status for them
+with TriggerMessage, waiting before the first request, notifying the owner when a charger connects) follows
+what lbbrhzn/ocpp (https://github.com/lbbrhzn/ocpp, MIT, Copyright (c) 2021 lbbrhzn) does on real chargers.
+That is behaviour learned from it; no code has been copied. Code adapted from it would keep its MIT notice.
+
 MIT License
 
 Copyright (c) 2025 Michael Adler

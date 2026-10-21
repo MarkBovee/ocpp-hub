@@ -1,0 +1,112 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OCPP Hub",
+        "description": "Stel de poort in waarmee je laadpaal verbindt. Gebruik in het OCPP-profiel van de laadpaal ws:// gevolgd door het adres van deze Home Assistant, een dubbele punt en deze poort.",
+        "data": {
+          "port": "Poort"
+        },
+        "data_description": {
+          "port": "De TCP-poort waarop de OCPP-server luistert. Een poort boven 1024 vraagt geen bijzondere rechten."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "OCPP Hub is al ingesteld."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Mirror naar de backend van de leverancier",
+        "description": "Stuur een alleen-lezen kopie van alles wat de laadpaal meldt naar de eigen backend van de fabrikant, zodat de app blijft werken. De fabrikant kan meekijken maar de laadpaal nooit aansturen. Laat het adres leeg om de mirror uit te zetten.",
+        "data": {
+          "vendor_url": "Adres van de backend",
+          "vendor_user": "Gebruikersnaam",
+          "vendor_password": "Wachtwoord"
+        },
+        "data_description": {
+          "vendor_url": "Begint met ws:// of wss:// en bevat de host, de poort en het pad van de OCPP-backend van de fabrikant, zonder het serienummer van de laadpaal en zonder inloggegevens.",
+          "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
+          "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft."
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Het adres moet beginnen met ws:// of wss:// en een host noemen.",
+      "credentials_in_url": "Haal de gebruikersnaam en het wachtwoord uit het adres en gebruik de velden hieronder.",
+      "credentials_incomplete": "Vul zowel een gebruikersnaam als een wachtwoord in, of geen van beide.",
+      "invalid_settings": "Deze instellingen kunnen niet gebruikt worden."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "available": "Beschikbaar",
+          "preparing": "Voorbereiden",
+          "charging": "Laden",
+          "suspended_evse": "Gepauzeerd door de laadpaal",
+          "suspended_ev": "Gepauzeerd door de auto",
+          "finishing": "Afronden",
+          "reserved": "Gereserveerd",
+          "unavailable": "Niet beschikbaar",
+          "faulted": "Storing"
+        }
+      },
+      "power": {
+        "name": "Vermogen"
+      },
+      "energy": {
+        "name": "Energie"
+      },
+      "current_phase": {
+        "name": "Stroom {phase}"
+      },
+      "voltage_phase": {
+        "name": "Spanning {phase}"
+      },
+      "current_offered": {
+        "name": "Aangeboden stroom"
+      },
+      "model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "mirror_status": {
+        "name": "Mirror naar leverancier",
+        "state": {
+          "idle": "Inactief",
+          "connecting": "Verbinden",
+          "connected": "Verbonden"
+        }
+      },
+      "mirror_queue": {
+        "name": "Wachtrij naar leverancier"
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "Verbonden"
+      }
+    }
+  },
+  "exceptions": {
+    "charger_connected_title": {
+      "message": "Laadpaal verbonden"
+    },
+    "charger_connected": {
+      "message": "Een laadpaal heeft verbinding gemaakt met OCPP Hub en zich aangemeld.\n\n- Fabrikant: {vendor}\n- Type: {model}\n- Firmware: {firmware}\n- Serienummer: {serial}\n- OCPP-versie: {protocol}\n- Mirror naar de backend van de leverancier: {mirror}"
+    },
+    "charger_connected_mirror_on": {
+      "message": "aan"
+    },
+    "charger_connected_mirror_off": {
+      "message": "uit"
+    }
+  }
+}

@@ -118,33 +118,50 @@ async def test_bad_requests_get_errors_and_the_link_survives(start_hub) -> None:
     assert alive[0] == 3
 
 
-# Intent: after boot the hub reads the configuration and stores the supported feature profiles.
+# Answer the hub's one-key GetConfiguration requests from a table of values, as the NEO does, one request per key.
+# A key the table does not hold is reported as unknown; a key outside the hub's list is added to the first answer so a
+# test can check that only the asked keys are kept.
+async def _answer_configuration(charger, values: dict[str, str], extra: dict[str, str] | None = None) -> list[str]:
+    from ocpp_hub_core.session import CONFIG_KEYS
+
+    asked: list[str] = []
+    for _ in CONFIG_KEYS:
+        request = await charger.next_hub_call()
+        assert request[2] == "GetConfiguration" and len(request[3]["key"]) == 1
+        key = request[3]["key"][0]
+        asked.append(key)
+        found = [{"key": key, "readonly": False, "value": values[key]}] if key in values else []
+        found += [{"key": k, "readonly": False, "value": v} for k, v in (extra or {}).items()] if not asked[1:] else []
+        await charger.answer(request, {"configurationKey": found, **({} if found else {"unknownKey": [key]})})
+    return asked
+
+
+# Intent: after boot the hub reads the configuration, stores the feature profiles and keeps only the asked keys.
 # Why: whether smart charging is offered at all decides if a current limit can ever be set.
 async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> None:
     hub = await start_hub(setup_delay_s=0.0)
     charger = await hub.charger()
     await charger.boot()
 
-    request = await charger.next_hub_call()
-    await charger.answer(
-        request,
+    asked = await _answer_configuration(
+        charger,
         {
-            "configurationKey": [
-                {"key": "SupportedFeatureProfiles", "readonly": True, "value": "Core,FirmwareManagement,SmartCharging"},
-                {"key": "MeterValuesSampledData", "readonly": False, "value": "Energy.Active.Import.Register"},
-                {"key": "MeterValueSampleInterval", "readonly": False, "value": "15"},
-            ]
+            "SupportedFeatureProfiles": "Core,FirmwareManagement,SmartCharging",
+            "MeterValuesSampledData": "Energy.Active.Import.Register",
+            "MeterValueSampleInterval": "15",
         },
+        extra={"AuthorizationKey": "not-asked-for"},
     )
     change = await charger.next_hub_call()
     await charger.answer(change, {"status": "Accepted"})
 
-    assert request[2] == "GetConfiguration" and "SupportedFeatureProfiles" in request[3]["key"]
+    assert asked[0] == "SupportedFeatureProfiles" and "MeterValuesSampledData" in asked
     assert change[2] == "ChangeConfiguration" and change[3]["key"] == "MeterValuesSampledData"
     assert "Current.Import" in change[3]["value"]
     await asyncio.sleep(0.05)
     assert hub.listener.latest.features == {"Core", "FirmwareManagement", "SmartCharging"}
     assert hub.listener.latest.configuration["MeterValuesSampledData"] == change[3]["value"]
+    assert "AuthorizationKey" not in hub.listener.latest.configuration
 
 
 # Intent: a metering setting the charger already has is not written again.
@@ -156,16 +173,10 @@ async def test_matching_metering_settings_are_left_alone(start_hub) -> None:
     hub = await start_hub(setup_delay_s=0.0)
     charger = await hub.charger()
     await charger.boot()
-    request = await charger.next_hub_call()
 
-    await charger.answer(
-        request,
-        {
-            "configurationKey": [
-                {"key": "MeterValuesSampledData", "readonly": False, "value": wanted.measurands},
-                {"key": "MeterValueSampleInterval", "readonly": False, "value": str(wanted.meter_sample_interval_s)},
-            ]
-        },
+    await _answer_configuration(
+        charger,
+        {"MeterValuesSampledData": wanted.measurands, "MeterValueSampleInterval": str(wanted.meter_sample_interval_s)},
     )
 
     with pytest.raises(TimeoutError):
@@ -235,3 +246,97 @@ async def test_connection_without_identity_is_refused(start_hub) -> None:
     await charger.wait_closed()
 
     assert charger.close_code == 4001
+
+
+# Intent: a charger that reconnects without a BootNotification is asked for its boot, and then for its status.
+# Why: after a restart of the hub the Raedian NEO sends neither, and without them the hub knows no model and no state.
+async def test_charger_that_skips_its_boot_is_asked_to_introduce_itself(start_hub) -> None:
+    hub = await start_hub(boot_wait_s=0.0, trigger_settle_s=0.2, setup_retry_delays_s=(0.2,))
+    charger = await hub.charger()
+
+    boot_request = await charger.next_hub_call()
+    await charger.answer(boot_request, {"status": "Accepted"})
+    await charger.boot()
+    status_request = await charger.next_hub_call()
+    await charger.answer(status_request, {"status": "Accepted"})
+
+    assert boot_request[2] == "TriggerMessage" and boot_request[3] == {"requestedMessage": "BootNotification"}
+    assert status_request[2] == "TriggerMessage"
+    assert status_request[3] == {"requestedMessage": "StatusNotification", "connectorId": 1}
+    assert hub.listener.latest.info.model == "NEO_22T_A"
+
+
+# Intent: a charger that introduces itself on its own is not asked again.
+# Why: every extra request to a charger is a risk, and a normal charger sends its boot and status without being asked.
+async def test_charger_that_introduces_itself_is_not_asked(start_hub) -> None:
+    hub = await start_hub(boot_wait_s=0.3, trigger_settle_s=0.1, setup_retry_delays_s=(0.2,))
+    charger = await hub.charger()
+
+    await charger.boot()
+    await charger.call("StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"})
+
+    with pytest.raises(TimeoutError):
+        await charger.next_hub_call(timeout=0.8)
+
+
+# Intent: stopping the hub drops every charger connection without a closing handshake, and the sessions end cleanly.
+# Why: the Raedian NEO waits for minutes after any proper close and returns in seconds after a lost connection.
+async def test_stopping_the_hub_drops_chargers_without_a_closing_handshake(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    await charger.boot()
+
+    await hub.central.stop()
+    await charger.wait_closed()
+    await asyncio.sleep(0.05)
+
+    assert charger.close_code == 1006
+    assert hub.listener.disconnected == ["TEST0001"] and hub.listener.latest.connected is False
+
+
+# Answer every request the hub sends until the charger has been quiet for a moment, as a charger that knows no key and
+# accepts everything would; the requests are returned in the order they came.
+async def _serve_hub_calls(charger, statuses: dict[str, str] | None = None) -> list[list]:
+    seen: list[list] = []
+    while True:
+        try:
+            request = await charger.next_hub_call(timeout=0.4)
+        except TimeoutError:
+            return seen
+        seen.append(request)
+        if request[2] == "GetConfiguration":
+            key = request[3]["key"][0]
+            value = {"MeterValuesSampledData": "X"}.get(key)
+            found = [{"key": key, "readonly": False, "value": value}] if value is not None else []
+            await charger.answer(request, {"configurationKey": found, **({} if found else {"unknownKey": [key]})})
+        else:
+            await charger.answer(request, {"status": (statuses or {}).get(request[2], "Accepted")})
+
+
+# Intent: a charger that boots again while its setup is still running does not get a second setup.
+# Why: a setup lives for minutes and asks for seven keys, so a charger in a boot loop would otherwise be flooded.
+async def test_repeated_boots_run_one_setup(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0, setup_retry_delays_s=())
+    charger = await hub.charger()
+
+    for _ in range(5):
+        await charger.boot()
+    seen = await _serve_hub_calls(charger)
+
+    keys = [request[3]["key"][0] for request in seen if request[2] == "GetConfiguration"]
+    assert keys.count("SupportedFeatureProfiles") == 1
+
+
+# Intent: a metering setting the charger rejected is not written again on the same connection.
+# Why: the write is limited to two keys, but a charger that keeps rejecting must not be asked again at every boot.
+async def test_rejected_metering_setting_is_not_written_again(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0, setup_retry_delays_s=())
+    charger = await hub.charger()
+
+    await charger.boot()
+    first = await _serve_hub_calls(charger, {"ChangeConfiguration": "Rejected"})
+    await charger.boot()
+    second = await _serve_hub_calls(charger, {"ChangeConfiguration": "Rejected"})
+
+    writes = [request for request in first + second if request[2] == "ChangeConfiguration"]
+    assert len(writes) == 1

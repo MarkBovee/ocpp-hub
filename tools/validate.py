@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the CI checks locally in one command and compare test failures with a known-environment baseline.
 
-    python tools/validate.py            # everything CI runs, then pytest
+    python tools/validate.py            # everything CI runs, then pytest (the HA layer too when .venv-ha exists)
     python tools/validate.py --quick    # skip pytest
     python tools/validate.py --tests-only -k issue171
 
@@ -32,6 +32,15 @@ def venv_python() -> str:
         if candidate.exists():
             return str(candidate)
     return sys.executable
+
+
+# Pick the virtualenv that has Home Assistant and its test plugin, or None when it was not created.
+# The Home Assistant layer tests need it; the engine tests do not.
+def ha_python() -> str | None:
+    for candidate in (ROOT / ".venv-ha" / "Scripts" / "python.exe", ROOT / ".venv-ha" / "bin" / "python"):
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 # Read the baseline of environment-only failing test ids (prefix match, comments allowed).
@@ -75,12 +84,27 @@ def check_yaml(python: str, results: dict[str, bool]) -> None:
         "bad=[]\n"
         "for pat in ('*.yml','*.yaml'):\n"
         "    for p in pathlib.Path('.').rglob(pat):\n"
-        "        if {'.venv','.git'} & set(p.parts): continue\n"
+        "        if {'.venv','.venv-ha','.git'} & set(p.parts): continue\n"
         "        try: yaml.safe_load(p.read_text(encoding='utf-8'))\n"
         "        except Exception as e: bad.append(f'{p}: {str(e)[:80]}')\n"
         "print('\\n'.join(bad)); sys.exit(1 if bad else 0)\n"
     )
     run_step("yaml", [python, "-c", code], results)
+
+
+# Run the Home Assistant layer tests in .venv-ha, or say loudly that they were skipped.
+# CI always runs them; a local run without .venv-ha must not look as complete as one with it. A -k expression is meant
+# for the engine tests, so it skips this step instead of failing on "no tests collected".
+def run_ha_layer_tests(expression: str, results: dict[str, bool], skipped: list[str]) -> None:
+    name = "pytest (Home Assistant layer)"
+    python = ha_python()
+    if expression:
+        skipped.append(f"{name}: not run with -k")
+    elif python is None:
+        print(f"\n== {name}\nskipped: .venv-ha does not exist (see docs/developer.md); CI runs these tests")
+        skipped.append(f"{name}: no .venv-ha")
+    else:
+        run_step(name, [python, "-m", "pytest", "-q", "-rf", "-p", "no:cacheprovider", "tests_ha/"], results)
 
 
 # Orchestrate the CI-equivalent checks.
@@ -93,6 +117,7 @@ def main() -> int:
     args = parser.parse_args()
     python = venv_python()
     results: dict[str, bool] = {}
+    skipped: list[str] = []
 
     if not args.tests_only:
         run_step("ruff check", [python, "-m", "ruff", "check", "."], results)
@@ -116,10 +141,13 @@ def main() -> int:
         print(f"pytest: {len(failures)} failed, {len(known)} known environment failures, {len(new)} new")
         for item in new:
             print(f"  NEW FAILURE: {item}")
+        run_ha_layer_tests(args.expression, results, skipped)
 
     print("\nSummary")
     for name, ok in results.items():
         print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+    for name in skipped:
+        print(f"  skip {name}")
     return 0 if all(results.values()) else 1
 
 

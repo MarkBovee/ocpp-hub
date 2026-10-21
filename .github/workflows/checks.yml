@@ -50,3 +50,19 @@ jobs:
             base=$(git rev-parse --verify -q HEAD^ || git hash-object -t tree /dev/null)
             git diff --check "$base" HEAD
           fi
+
+  # The Home Assistant layer (config flow, setup, entities, diagnostics) against the real Home Assistant test harness.
+  # The version of the plugin pins the Home Assistant version it tests against; keep it equal to the owner's server.
+  ha-layer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install pytest-homeassistant-custom-component==0.13.373 "websockets>=15.0.1"
+
+      - name: Test the Home Assistant layer
+        run: pytest -q tests_ha/
