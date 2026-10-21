@@ -59,6 +59,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: OcppHub
         {
             "entry": {"data": dict(entry.data), "options": dict(entry.options)},
             "port": runtime.central.port,
+            "stored_sessions": runtime.sessions.count(),
             "mirror": "on" if runtime.mirror is not None else "off",
             "chargers": [_snapshot_data(snapshot) for snapshot in runtime.listener.snapshots.values()],
             "mirror_links": [_mirror_data(status) for status in mirror_statuses.values()],

@@ -1,0 +1,14 @@
+get_sessions:
+  fields:
+    charger_id:
+      required: false
+      example: "CHARGER1"
+      selector:
+        text:
+    limit:
+      required: false
+      example: 20
+      selector:
+        number:
+          min: 1
+          mode: box

@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import voluptuous as vol
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     BIND_HOST,
@@ -16,12 +18,15 @@ from .const import (
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
     CONF_VENDOR_USER,
+    DOMAIN,
     PACKAGE_LOGGER,
+    SERVICE_GET_SESSIONS,
 )
 from .core.central import CentralSystem
 from .core.mirror import VendorMirror
 from .core.mirror_model import MirrorSettings, MirrorSettingsError
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
+from .session_store import SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +40,28 @@ def _read_build_stamp() -> str:
         return (Path(__file__).parent / BUILD_FILE).read_text(encoding="utf-8").strip() or "unknown"
     except OSError:
         return "unknown"
+
+
+GET_SESSIONS_SCHEMA = vol.Schema(
+    {vol.Optional("charger_id"): str, vol.Optional("limit"): vol.All(int, vol.Range(min=1))}
+)
+
+
+# Register the service that returns the charge history. It lives at the integration level, so it exists as soon as
+# Home Assistant has loaded the integration, and it answers with data instead of changing anything.
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    # Return the stored charges, newest first, for one charger or all of them.
+    async def get_sessions(call: ServiceCall) -> dict[str, object]:
+        entries = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_hub_loaded")
+        sessions = entries[0].runtime_data.sessions.newest_first(call.data.get("charger_id"), call.data.get("limit"))
+        return {"sessions": [session.to_dict() for session in sessions]}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_GET_SESSIONS, get_sessions, schema=GET_SESSIONS_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+    return True
 
 
 # The mirror settings from the entry options, or None when no vendor URL is set.
@@ -61,7 +88,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     logging.getLogger(PACKAGE_LOGGER).setLevel(logging.INFO)
     build = await hass.async_add_executor_job(_read_build_stamp)
     settings = _mirror_settings(entry)
-    listener = HubListener(hass, entry.entry_id, build, mirror_enabled=settings is not None)
+    sessions = SessionStore(hass)
+    await sessions.async_load()
+    listener = HubListener(hass, entry.entry_id, build, sessions, mirror_enabled=settings is not None)
     mirror = VendorMirror(settings) if settings is not None else None
     if mirror is not None:
         await mirror.start()
@@ -74,7 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
     try:
-        entry.runtime_data = HubRuntime(central, listener, mirror)
+        entry.runtime_data = HubRuntime(central, listener, mirror, sessions)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
@@ -108,5 +137,8 @@ async def _stop_runtime(central: CentralSystem, mirror: VendorMirror | None) -> 
 async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
+        try:
+            await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
+        finally:
+            await entry.runtime_data.sessions.async_flush()
     return unloaded

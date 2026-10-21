@@ -18,6 +18,9 @@ CONF_VENDOR_URL = "vendor_url"
 CONF_VENDOR_USER = "vendor_user"
 CONF_VENDOR_PASSWORD = "vendor_password"
 
+# The service that returns the charge history.
+SERVICE_GET_SESSIONS = "get_sessions"
+
 # The logger of this package. Home Assistant often runs with warnings only, which would hide the connection and boot
 # lines this integration is judged by, so setup raises this one logger to INFO.
 PACKAGE_LOGGER = "custom_components.ocpp_hub"
@@ -44,3 +47,8 @@ def new_charger_signal(entry_id: str) -> str:
 # The dispatcher signal that carries every new snapshot of one charger to its entities.
 def snapshot_signal(entry_id: str, cp_id: str) -> str:
     return f"{DOMAIN}_snapshot_{entry_id}_{cp_id}"
+
+
+# The dispatcher signal that says a charge of one charger finished and the history changed.
+def session_signal(entry_id: str, cp_id: str) -> str:
+    return f"{DOMAIN}_session_{entry_id}_{cp_id}"

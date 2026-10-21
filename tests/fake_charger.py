@@ -109,6 +109,7 @@ class RecordingListener:
         self.frames: list[tuple[str, str, list[Any]]] = []
         self.connected: list[str] = []
         self.disconnected: list[str] = []
+        self.finished: list[Any] = []
 
     # Record a connection.
     def on_connected(self, session: Any) -> None:
@@ -121,6 +122,10 @@ class RecordingListener:
     # Record a frame with its sender.
     def on_frame(self, cp_id: str, sender: str, frame: list[Any]) -> None:
         self.frames.append((cp_id, sender, frame))
+
+    # Record a finished charge.
+    def on_session_finished(self, session: Any) -> None:
+        self.finished.append(session)
 
     # Record a disconnect.
     def on_disconnected(self, cp_id: str) -> None:

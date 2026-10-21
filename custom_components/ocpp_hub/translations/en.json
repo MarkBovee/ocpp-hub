@@ -87,6 +87,18 @@
       },
       "mirror_queue": {
         "name": "Vendor mirror queue"
+      },
+      "session_energy": {
+        "name": "Session energy"
+      },
+      "session_started": {
+        "name": "Session started"
+      },
+      "session_duration": {
+        "name": "Session duration"
+      },
+      "last_session": {
+        "name": "Last session"
       }
     },
     "binary_sensor": {
@@ -107,6 +119,25 @@
     },
     "charger_connected_mirror_off": {
       "message": "off"
+    },
+    "no_hub_loaded": {
+      "message": "OCPP Hub is not loaded, so there is no charge history to read yet."
+    }
+  },
+  "services": {
+    "get_sessions": {
+      "name": "Get charge sessions",
+      "description": "Returns the stored charge sessions, newest first. The history is never truncated.",
+      "fields": {
+        "charger_id": {
+          "name": "Charger ID",
+          "description": "Only the sessions of this charger. Leave empty for all."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Return at most this many of the newest sessions."
+        }
+      }
     }
   }
 }

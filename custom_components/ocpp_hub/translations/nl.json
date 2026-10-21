@@ -87,6 +87,18 @@
       },
       "mirror_queue": {
         "name": "Wachtrij naar leverancier"
+      },
+      "session_energy": {
+        "name": "Sessie-energie"
+      },
+      "session_started": {
+        "name": "Sessie gestart"
+      },
+      "session_duration": {
+        "name": "Sessieduur"
+      },
+      "last_session": {
+        "name": "Laatste sessie"
       }
     },
     "binary_sensor": {
@@ -107,6 +119,25 @@
     },
     "charger_connected_mirror_off": {
       "message": "uit"
+    },
+    "no_hub_loaded": {
+      "message": "OCPP Hub is niet geladen, dus er is nog geen laadgeschiedenis om te lezen."
+    }
+  },
+  "services": {
+    "get_sessions": {
+      "name": "Laadsessies ophalen",
+      "description": "Geeft de bewaarde laadsessies terug, nieuwste eerst. De geschiedenis wordt nooit ingekort.",
+      "fields": {
+        "charger_id": {
+          "name": "Lader-ID",
+          "description": "Alleen de sessies van deze lader. Leeg laten voor alle."
+        },
+        "limit": {
+          "name": "Limiet",
+          "description": "Geef maximaal zoveel van de nieuwste sessies terug."
+        }
+      }
     }
   }
 }
