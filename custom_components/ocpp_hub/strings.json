@@ -24,12 +24,16 @@
         "data": {
           "vendor_url": "Backend address",
           "vendor_user": "User name",
-          "vendor_password": "Password"
+          "vendor_password": "Password",
+          "max_current": "Highest current (A)",
+          "vendor_commands": "Commands from the backend"
         },
         "data_description": {
           "vendor_url": "Starts with ws:// or wss:// and holds the host, the port and the path of the manufacturer's OCPP backend, without the charger's serial number and without credentials.",
           "vendor_user": "Only if the backend asks for a user name. Set a password with it.",
-          "vendor_password": "Never shown again. Leave empty to keep the stored password; it is only kept while the host of the address stays the same."
+          "vendor_password": "Never shown again. Leave empty to keep the stored password; it is only kept while the host of the address stays the same.",
+          "max_current": "The highest current per phase the hub may ask the charger for. Keep it below the installer's own limit. A value under 6 A in the charge limit pauses the charger.",
+          "vendor_commands": "What happens to commands from the manufacturer's backend. Passing them on lets it start and stop charges, change a few settings, set charging profiles, unlock the cable and set the connector inoperative, within the current ceiling below. Reset, firmware, diagnostics and DataTransfer stay refused."
         }
       }
     },
@@ -105,6 +109,21 @@
       "connected": {
         "name": "Connected"
       }
+    },
+    "number": {
+      "charge_limit": {
+        "name": "Charge limit"
+      }
+    },
+    "switch": {
+      "charging": {
+        "name": "Charging"
+      }
+    },
+    "button": {
+      "clear_charge_limit": {
+        "name": "Clear charge limit"
+      }
     }
   },
   "exceptions": {
@@ -122,6 +141,24 @@
     },
     "no_hub_loaded": {
       "message": "OCPP Hub is not loaded, so there is no charge history to read yet."
+    },
+    "control_not_connected": {
+      "message": "The charger is not connected, so nothing can be sent to it."
+    },
+    "control_above_ceiling": {
+      "message": "Refused: {detail}. Raise the ceiling in the integration options if the installation allows it."
+    },
+    "control_invalid_value": {
+      "message": "Refused: {detail}."
+    },
+    "control_rejected": {
+      "message": "The charger refused the request ({detail})."
+    },
+    "control_no_charge": {
+      "message": "No charge is running, so there is nothing to stop."
+    },
+    "control_unreachable": {
+      "message": "The charger did not answer: {detail}."
     }
   },
   "services": {
@@ -137,6 +174,14 @@
           "name": "Limit",
           "description": "Return at most this many of the newest sessions."
         }
+      }
+    }
+  },
+  "selector": {
+    "vendor_commands": {
+      "options": {
+        "reject": "Refuse them (read-only mirror)",
+        "forward": "Pass them on to the charger"
       }
     }
   }

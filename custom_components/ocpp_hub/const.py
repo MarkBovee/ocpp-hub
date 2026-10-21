@@ -17,6 +17,12 @@ BIND_HOST = "0.0.0.0"
 CONF_VENDOR_URL = "vendor_url"
 CONF_VENDOR_USER = "vendor_user"
 CONF_VENDOR_PASSWORD = "vendor_password"
+# What happens to the vendor's commands: "reject" (default) or "forward" (see core/mirror_forward.py).
+CONF_VENDOR_COMMANDS = "vendor_commands"
+
+# The highest current per phase the hub may ask a charger for. The owner sets it below the installer's own limit.
+CONF_MAX_CURRENT = "max_current"
+DEFAULT_MAX_CURRENT = 16
 
 # The service that returns the charge history.
 SERVICE_GET_SESSIONS = "get_sessions"

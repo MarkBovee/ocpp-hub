@@ -162,6 +162,7 @@ class ChargerSession:
         settings: SessionSettings | None = None,
         clock: Callable[[], datetime] | None = None,
         resume: Mapping[int, ConnectorState] | None = None,
+        limit: tuple[float | None, str | None] = (None, None),
     ) -> None:
         self._connection = connection
         self._listener = listener
@@ -180,6 +181,7 @@ class ChargerSession:
         self._snapshot = ChargerSnapshot(
             cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock(), connectors=dict(resume or {})
         )
+        self._snapshot = replace(self._snapshot, charge_limit_a=limit[0], limit_purpose=limit[1])
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
             "Heartbeat": self._heartbeat,
@@ -257,6 +259,14 @@ class ChargerSession:
             raise CallRejectedError(str(frame[2]), str(frame[3]) if len(frame) > 3 else "")
         result = frame[2]
         return result if isinstance(result, dict) else {}
+
+    # Remember the limit the charger accepted and the purpose it accepted it as.
+    # The snapshot is what Home Assistant shows, and the purpose spares the next write the purposes that were refused.
+    # A session whose connection has ended records nothing: the charger may already be on a newer session, and an
+    # old snapshot must not overwrite what the entities show.
+    def record_limit(self, amps: float | None, purpose: str | None) -> None:
+        if self._snapshot.connected:
+            self._update(charge_limit_a=amps, limit_purpose=purpose)
 
     # Send one frame to the charger and tell the listener about it.
     # Every frame the hub sends passes here, so listeners such as the mirror see the hub's answers too.
@@ -434,6 +444,9 @@ class ChargerSession:
                     )
                 )
                 self._listener.on_session_finished(finished)
+                if self._snapshot.limit_purpose == commands.PURPOSE_TX:
+                    # A charge profile ends with its charge; the next charge is not limited by it.
+                    self.record_limit(None, None)
         return {"idTagInfo": {"status": "Accepted"}}
 
     # The charge that a StopTransaction ends. Its energy is the meter at the stop minus the meter at the start, or, when

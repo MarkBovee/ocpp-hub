@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from . import commands
+from .control import ChargerControl, ControlPolicy
 from .frames import Frame
 from .model import ChargerSnapshot, ChargeSession, ConnectorState
 from .session import ChargerSession, SessionListener, SessionSettings
@@ -33,7 +35,9 @@ class CentralSystem:
         listeners: Sequence[SessionListener],
         settings: SessionSettings | None = None,
         clock: Callable[[], datetime] | None = None,
+        policy: ControlPolicy | None = None,
     ) -> None:
+        self._policy = policy or ControlPolicy()
         self._listeners = list(listeners)
         self._settings = settings
         self._clock = clock
@@ -43,6 +47,9 @@ class CentralSystem:
         self._transaction_counter = int(time.time()) % 2**31
         # The charges that were running when a charger's connection ended, until the charger comes back.
         self._open_charges: dict[str, dict[int, ConnectorState]] = {}
+        # The limit the hub set on a charger, as (amps, purpose), until the charger comes back. A station profile stays
+        # in the charger when the link drops, so it must stay visible; a charge profile ends with its charge.
+        self._limits: dict[str, tuple[float | None, str | None]] = {}
 
     @property
     def port(self) -> int:
@@ -72,6 +79,16 @@ class CentralSystem:
     def session(self, cp_id: str) -> ChargerSession | None:
         return self._sessions.get(cp_id)
 
+    @property
+    def policy(self) -> ControlPolicy:
+        """What the owner allows the hub to write to a charger."""
+        return self._policy
+
+    # The writes to a connected charger, under the owner's ceiling; None when the charger is not connected.
+    def control(self, cp_id: str) -> ChargerControl | None:
+        session = self._sessions.get(cp_id)
+        return ChargerControl(session, self._policy) if session is not None else None
+
     # The snapshots of all connected chargers.
     # Used for diagnostics and by tests.
     def snapshots(self) -> list[ChargerSnapshot]:
@@ -82,6 +99,13 @@ class CentralSystem:
     def _next_transaction_id(self) -> int:
         self._transaction_counter += 1
         return self._transaction_counter
+
+    # Keep the station-wide limit of a connection that ended, to show it on the next one; forget anything else.
+    def _remember_limit(self, cp_id: str, snapshot: ChargerSnapshot) -> None:
+        if snapshot.charge_limit_a is not None and snapshot.limit_purpose == commands.PURPOSE_CHARGE_POINT_MAX:
+            self._limits[cp_id] = (snapshot.charge_limit_a, snapshot.limit_purpose)
+        else:
+            self._limits.pop(cp_id, None)
 
     # Handle one incoming charger connection until it ends.
     # The identity is the last path segment of the URL; a connection without identity or protocol is refused.
@@ -111,6 +135,7 @@ class CentralSystem:
             self._settings,
             self._clock,
             resume,
+            self._limits.get(cp_id, (None, None)),
         )
         self._sessions[cp_id] = session
         _LOGGER.info("Charger %s connected (%s)", cp_id, protocol)
@@ -119,6 +144,7 @@ class CentralSystem:
         finally:
             if self._sessions.get(cp_id) is session:
                 del self._sessions[cp_id]
+                self._remember_limit(cp_id, session.snapshot)
                 running = _running_connectors(session.snapshot)
                 if running:
                     self._open_charges[cp_id] = running

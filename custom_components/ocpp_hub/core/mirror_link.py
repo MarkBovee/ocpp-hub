@@ -12,23 +12,29 @@ from datetime import UTC, datetime
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.typing import Subprotocol
 
+from .control import ControlPolicy, plain_text
 from .frames import (
     ERROR_FORMATION_VIOLATION,
+    ERROR_INTERNAL,
+    ERROR_NOT_IMPLEMENTED,
+    ERROR_NOT_SUPPORTED,
     MSG_CALL,
     MSG_CALL_ERROR,
     MSG_CALL_RESULT,
     Frame,
     build_call,
     build_call_error,
+    build_call_result,
     call_action,
     join_websocket_url,
     parse_frame,
 )
 from .mirror_commands import TriggerRequest, answer_vendor_call
-from .mirror_model import MirrorSettings, MirrorStatus
+from .mirror_forward import FORWARDED, Forward, plan_forward, refusal_for
+from .mirror_model import COMMANDS_FORWARD, MirrorSettings, MirrorStatus
 from .mirror_queue import (
     ACTION_BOOT,
     ACTION_HEARTBEAT,
@@ -41,7 +47,7 @@ from .mirror_queue import (
     is_integer,
 )
 from .mirror_rewrite import StartPairing, translate_for_vendor
-from .session import ChargerSession
+from .session import CallError, CallRejectedError, ChargerSession
 from .txid_map import TransactionIdMap
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +71,12 @@ class _RedactAuthorization(logging.Filter):
 # included. The vendor connection gets this logger instead of the library's own, so a debug log can never leak it.
 _WEBSOCKET_LOGGER = logging.getLogger(f"{__name__}.websocket")
 _WEBSOCKET_LOGGER.addFilter(_RedactAuthorization())
+
+# The error codes of the charger that are passed on to the vendor as they are; any other becomes an internal error.
+# The most vendor commands that may wait for the charger at once; the rest are refused, so a flood cannot hold up the
+# owner's own writes, which queue on the same connection.
+MAX_FORWARDS = 4
+_RELAYED_ERRORS = frozenset({ERROR_NOT_SUPPORTED, ERROR_NOT_IMPLEMENTED, ERROR_FORMATION_VIOLATION, ERROR_INTERNAL})
 
 
 # A fresh unique id for a frame the mirror makes up itself (a heartbeat or a replay).
@@ -94,8 +106,12 @@ class MirrorLink:
         ssl_context: ssl.SSLContext | None,
         on_finished: Callable[[MirrorLink], None],
         clock: Callable[[], datetime] | None = None,
+        policy: ControlPolicy | None = None,
     ) -> None:
         self._session = session
+        self._policy = policy or ControlPolicy()
+        # Commands being passed on to the charger; they run beside the reader, which must keep reading meanwhile.
+        self._forwards: set[asyncio.Task[None]] = set()
         self._settings = settings
         self._transactions = transactions
         self._ssl_context = ssl_context
@@ -324,7 +340,10 @@ class MirrorLink:
         finally:
             reader.cancel()
             sender.cancel()
-            await asyncio.gather(reader, sender, return_exceptions=True)
+            forwards = list(self._forwards)
+            for forward in forwards:
+                forward.cancel()
+            await asyncio.gather(reader, sender, *forwards, return_exceptions=True)
 
     # Read frames from the vendor: answers resolve the waiting request, commands get an answer at once.
     async def _read_loop(self, connection: ClientConnection) -> None:
@@ -347,6 +366,9 @@ class MirrorLink:
         if action is None or not isinstance(frame[3], dict):
             await connection.send(build_call_error(unique_id, ERROR_FORMATION_VIOLATION, "malformed request"))
             return
+        if self._settings.commands == COMMANDS_FORWARD and action in FORWARDED:
+            self._start_forward(connection, unique_id, action, frame[3])
+            return
         answer = answer_vendor_call(
             unique_id, action, frame[3], self._session.snapshot.configuration, self._can_trigger
         )
@@ -355,6 +377,60 @@ class MirrorLink:
         await connection.send(answer.frame)
         if answer.trigger is not None:
             self._trigger(answer.trigger)
+
+    # Pass a vendor command on to the charger in a task of its own and send the charger's answer back, so the reader
+    # goes on reading while the charger takes its time.
+    def _start_forward(
+        self, connection: ClientConnection, unique_id: str, action: str, payload: dict[str, Any]
+    ) -> None:
+        task = asyncio.get_running_loop().create_task(self._forward(connection, unique_id, action, payload))
+        self._forwards.add(task)
+        task.add_done_callback(self._forwards.discard)
+
+    # Check the command against the ceiling and the transaction map, give it to the charger, and relay the answer.
+    # Every outcome is logged with the action, because this is the one way the vendor changes what the charger does.
+    async def _forward(
+        self, connection: ClientConnection, unique_id: str, action: str, payload: dict[str, Any]
+    ) -> None:
+        if len(self._forwards) > MAX_FORWARDS:
+            _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
+            await self._send_to_vendor(connection, build_call_result(unique_id, refusal_for(action)))
+            return
+        plan = plan_forward(action, payload, self._policy, self._transactions)
+        if not isinstance(plan, Forward):
+            _LOGGER.warning("[forward] Vendor %s for %s refused: %s", action, self.cp_id, plain_text(plan.reason))
+            await self._send_to_vendor(connection, build_call_result(unique_id, plan.answer))
+            return
+        try:
+            answer = await self._session.call(plan.action, plan.payload)
+        except CallRejectedError as error:
+            _LOGGER.info(
+                "[forward] Vendor %s for %s: the charger answered %s", action, self.cp_id, plain_text(error.code, 40)
+            )
+            code = error.code if error.code in _RELAYED_ERRORS else ERROR_INTERNAL
+            refusal = build_call_error(unique_id, code, "the charger refused the request")
+            await self._send_to_vendor(connection, refusal)
+            return
+        except CallError as error:
+            _LOGGER.warning("[forward] Vendor %s for %s did not reach the charger: %s", action, self.cp_id, error)
+            await self._send_to_vendor(
+                connection, build_call_error(unique_id, ERROR_INTERNAL, "the charger did not answer")
+            )
+            return
+        _LOGGER.info(
+            "[forward] Vendor %s for %s passed on; the charger answered %s", action, self.cp_id, answer.get("status")
+        )
+        if action == "ClearChargingProfile" and answer.get("status") == "Accepted" and set(payload) - {"id"}:
+            # Clearing without an id, or by filters, can remove the hub's own profile as well.
+            self._session.record_limit(None, None)
+        await self._send_to_vendor(connection, build_call_result(unique_id, answer))
+
+    # Send a frame to the vendor; a vendor that left meanwhile has no use for the answer.
+    async def _send_to_vendor(self, connection: ClientConnection, text: str) -> None:
+        try:
+            await connection.send(text)
+        except ConnectionClosed:
+            _LOGGER.info("The vendor backend of %s closed before the answer to its command could be sent", self.cp_id)
 
     # Whether the frame a TriggerMessage asks for is known.
     def _can_trigger(self, request: TriggerRequest) -> bool:

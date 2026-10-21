@@ -11,11 +11,18 @@ A charger talks to one OCPP backend at a time. Point it at Home Assistant and th
 ## What it does
 
 - Accepts the charger on a port you choose and shows its status, power, per-phase current, energy and connection as entities.
-- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; the vendor's commands are answered by the hub and never reach the charger.
+- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; by default the vendor's commands are refused by the hub and never reach the charger; you can choose to pass them on (see below).
 - Keeps the history of every charge (energy, peak power, duration, tag, stop reason) without limit, and shows the running charge live. See [docs/dashboard.md](docs/dashboard.md) for a ready dashboard.
 - Stays local: no cloud service of ours is involved.
 
-Still to come: a charge limit and start/stop through `number` and `switch` entities. Writing to a charger needs the owner's explicit approval for each kind of write, so it is not built until that is given.
+## Control
+
+Two entities write to the charger, both only when you use them:
+
+- `number.ocpp_hub_<charger id>_charge_limit` sets the current per phase, from 0 to the ceiling in the options (default 16 A, never above what you set there). A value under 6 A is sent as 0 A, because a car does not charge under 6 A: it pauses the charger. The hub tries a station-wide `ChargePointMaxProfile` first, then `TxProfile` while a charge runs, then `TxDefaultProfile`, and remembers which one the charger accepted. The number shows what the charger last accepted on this connection; the charger is not asked what it holds, so after a reconnect it shows nothing until you set the limit again.
+- `switch.ocpp_hub_<charger id>_charging` starts a charge (`RemoteStartTransaction`, tag `OCPPHUB`) or stops the running one (`RemoteStopTransaction`). A start works only with a car connected; the charger refuses otherwise and Home Assistant says so.
+
+Whether a charger really obeys a charging profile is proven only by watching a charge; the NEO has not been seen doing it yet. Every write is logged with the prefix `[write]`.
 
 ## What happens when a charger connects
 
@@ -47,7 +54,8 @@ What the mirror does and does not do:
 
 - It forwards every request of the charger except its heartbeats, in order, one at a time, and sends heartbeats of its own at the interval the vendor asks for. When the vendor is unreachable it keeps the frames in a queue of up to 5000 (only meter values and status changes are dropped when it is full) and delivers them in order when the link is back.
 - Transaction ids differ between the hub and the vendor; the mirror translates them. A stop for a transaction the vendor never confirmed is not sent.
-- Every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
+- By default every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
+- With *Commands from the backend* set to *Pass them on to the charger*, the vendor's `RemoteStartTransaction`, `RemoteStopTransaction`, `SetChargingProfile`, `ClearChargingProfile`, `ChangeConfiguration`, `ChangeAvailability` and `UnlockConnector` go to the charger, and its answer goes back to the vendor. Limits stay: a charging profile (also one inside a remote start) must name its unit (A or W) and may not ask for more than your current ceiling, a profile in watts is converted with its number of phases, and a profile that reuses the hub's profile id is refused; so is a stop of a transaction the hub does not know. Only a list of standard OCPP settings that touch neither the connection, the authentication, the metering nor the reading of profiles can be changed (for example `LightIntensity` and `ConnectionTimeOut`; keys that set what or how often the charger reports, such as `HeartbeatInterval`, are not on the list); any other key is refused and logged, so you can see what the vendor tried. `Reset`, `UpdateFirmware`, `GetDiagnostics` and `DataTransfer` are refused in every setting. Note that the vendor can still pause the charger with a profile of 0 A or set the connector inoperative, and can unlock the cable: you chose to allow that by turning this on. At most four vendor commands wait for the charger at once. Every passed-on or refused command is logged with the prefix `[forward]`. A profile from the vendor sits next to the one the hub sets, and the charger applies the lower limit, so the charge limit number does not show what the vendor set.
 - The queue and the transaction ids live in memory. If Home Assistant restarts while a charge is running, that session stays open at the vendor, and its meter values go without a transaction id.
 
 ## Install

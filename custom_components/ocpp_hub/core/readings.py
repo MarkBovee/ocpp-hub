@@ -88,3 +88,8 @@ def session_duration_s(snapshot: ChargerSnapshot) -> int | None:
     if charge is None or charge.started_at is None or snapshot.meter is None:
         return None
     return max(int((snapshot.meter.sampled_at - charge.started_at).total_seconds()), 0)
+
+
+# Whether a charge is running on the socket connector.
+def charge_running(snapshot: ChargerSnapshot) -> bool:
+    return _running_charge(snapshot) is not None

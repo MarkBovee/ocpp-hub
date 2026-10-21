@@ -9,10 +9,29 @@ from urllib.parse import urlsplit
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
-from .const import CONF_PORT, CONF_VENDOR_PASSWORD, CONF_VENDOR_URL, CONF_VENDOR_USER, DEFAULT_PORT, DOMAIN
-from .core.mirror_model import MirrorSettings, MirrorSettingsError
+from .const import (
+    CONF_MAX_CURRENT,
+    CONF_PORT,
+    CONF_VENDOR_COMMANDS,
+    CONF_VENDOR_PASSWORD,
+    CONF_VENDOR_URL,
+    CONF_VENDOR_USER,
+    DEFAULT_MAX_CURRENT,
+    DEFAULT_PORT,
+    DOMAIN,
+)
+from .core.mirror_model import COMMAND_POLICIES, COMMANDS_REJECT, MirrorSettings, MirrorSettingsError
 
 # The form field each settings error belongs to; the others are shown on the form as a whole.
 ERROR_FIELDS = {
@@ -44,8 +63,9 @@ def vendor_options(form: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[s
     user = (form.get(CONF_VENDOR_USER) or "").strip()
     keeps_stored = bool(user) and _same_server(url, stored.get(CONF_VENDOR_URL, ""))
     password = form.get(CONF_VENDOR_PASSWORD) or (stored.get(CONF_VENDOR_PASSWORD, "") if keeps_stored else "")
-    MirrorSettings(url=url, user=user or None, password=password or None)
-    options = {CONF_VENDOR_URL: url}
+    commands = form.get(CONF_VENDOR_COMMANDS) or COMMANDS_REJECT
+    MirrorSettings(url=url, user=user or None, password=password or None, commands=commands)
+    options = {CONF_VENDOR_URL: url, CONF_VENDOR_COMMANDS: commands}
     if user:
         options[CONF_VENDOR_USER] = user
     if password:
@@ -86,7 +106,9 @@ class OcppHubOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                return self.async_create_entry(data=vendor_options(user_input, self.config_entry.options))
+                ceiling = int(user_input.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT))
+                options = vendor_options(user_input, self.config_entry.options)
+                return self.async_create_entry(data={**options, CONF_MAX_CURRENT: ceiling})
             except MirrorSettingsError as error:
                 errors[ERROR_FIELDS.get(error.code, "base")] = error.code
         shown = user_input if user_input is not None else self.config_entry.options
@@ -95,6 +117,17 @@ class OcppHubOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_VENDOR_URL, description={"suggested_value": shown.get(CONF_VENDOR_URL, "")}): str,
                 vol.Optional(CONF_VENDOR_USER, description={"suggested_value": shown.get(CONF_VENDOR_USER, "")}): str,
                 vol.Optional(CONF_VENDOR_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                vol.Optional(
+                    CONF_VENDOR_COMMANDS, default=shown.get(CONF_VENDOR_COMMANDS, COMMANDS_REJECT)
+                ): SelectSelector(
+                    SelectSelectorConfig(options=list(COMMAND_POLICIES), translation_key=CONF_VENDOR_COMMANDS)
+                ),
+                vol.Optional(
+                    CONF_MAX_CURRENT,
+                    default=int(shown.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT)),
+                ): NumberSelector(
+                    NumberSelectorConfig(min=6, max=80, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="A")
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

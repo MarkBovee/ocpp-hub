@@ -24,12 +24,16 @@
         "data": {
           "vendor_url": "Adres van de backend",
           "vendor_user": "Gebruikersnaam",
-          "vendor_password": "Wachtwoord"
+          "vendor_password": "Wachtwoord",
+          "max_current": "Hoogste stroom (A)",
+          "vendor_commands": "Commando's van de backend"
         },
         "data_description": {
           "vendor_url": "Begint met ws:// of wss:// en bevat de host, de poort en het pad van de OCPP-backend van de fabrikant, zonder het serienummer van de laadpaal en zonder inloggegevens.",
           "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
-          "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft."
+          "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft.",
+          "max_current": "De hoogste stroom per fase die de hub aan de lader mag vragen. Houd hem onder de limiet van de installateur. Een waarde onder 6 A bij de laadlimiet pauzeert de lader.",
+          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, een paar instellingen wijzigen, laadprofielen zetten, de kabel ontgrendelen en de connector buiten bedrijf zetten, binnen de stroomgrens hieronder. Reset, firmware, diagnostics en DataTransfer blijven geweigerd."
         }
       }
     },
@@ -105,6 +109,21 @@
       "connected": {
         "name": "Verbonden"
       }
+    },
+    "number": {
+      "charge_limit": {
+        "name": "Laadlimiet"
+      }
+    },
+    "switch": {
+      "charging": {
+        "name": "Laden"
+      }
+    },
+    "button": {
+      "clear_charge_limit": {
+        "name": "Laadlimiet wissen"
+      }
     }
   },
   "exceptions": {
@@ -122,6 +141,24 @@
     },
     "no_hub_loaded": {
       "message": "OCPP Hub is niet geladen, dus er is nog geen laadgeschiedenis om te lezen."
+    },
+    "control_not_connected": {
+      "message": "De lader is niet verbonden, dus er kan niets naartoe gestuurd worden."
+    },
+    "control_above_ceiling": {
+      "message": "Geweigerd: {detail}. Verhoog de bovengrens in de opties als de installatie dat toelaat."
+    },
+    "control_invalid_value": {
+      "message": "Geweigerd: {detail}."
+    },
+    "control_rejected": {
+      "message": "De lader weigerde het verzoek ({detail})."
+    },
+    "control_no_charge": {
+      "message": "Er loopt geen lading, dus er valt niets te stoppen."
+    },
+    "control_unreachable": {
+      "message": "De lader antwoordde niet: {detail}."
     }
   },
   "services": {
@@ -137,6 +174,14 @@
           "name": "Limiet",
           "description": "Geef maximaal zoveel van de nieuwste sessies terug."
         }
+      }
+    }
+  },
+  "selector": {
+    "vendor_commands": {
+      "options": {
+        "reject": "Weigeren (alleen-lezen mirror)",
+        "forward": "Doorlaten naar de lader"
       }
     }
   }

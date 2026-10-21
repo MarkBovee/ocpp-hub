@@ -14,23 +14,27 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     BIND_HOST,
     BUILD_FILE,
+    CONF_MAX_CURRENT,
     CONF_PORT,
+    CONF_VENDOR_COMMANDS,
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
     CONF_VENDOR_USER,
+    DEFAULT_MAX_CURRENT,
     DOMAIN,
     PACKAGE_LOGGER,
     SERVICE_GET_SESSIONS,
 )
 from .core.central import CentralSystem
+from .core.control import CHARGING_MIN_A, ControlPolicy
 from .core.mirror import VendorMirror
-from .core.mirror_model import MirrorSettings, MirrorSettingsError
+from .core.mirror_model import COMMANDS_REJECT, MirrorSettings, MirrorSettingsError
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
 from .session_store import SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 
 # The commit the running code comes from, as written by the deploy tool; "unknown" for a copy that was not deployed.
@@ -64,6 +68,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+# The ceiling for writes from the entry options. A value that cannot be right falls back to the default instead of
+# widening what is allowed; the error says so.
+def _control_policy(entry: OcppHubConfigEntry) -> ControlPolicy:
+    wanted = entry.options.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT)
+    try:
+        return ControlPolicy(max_current_a=float(wanted))
+    except TypeError, ValueError:
+        # The lowest ceiling that can work, not the default: an unreadable ceiling must never be wider than meant.
+        _LOGGER.error("The current ceiling %r is not valid; using the minimum of %s A", wanted, CHARGING_MIN_A)
+        return ControlPolicy(max_current_a=CHARGING_MIN_A)
+
+
 # The mirror settings from the entry options, or None when no vendor URL is set.
 # Options are validated by the options flow, so an invalid combination here means the entry was edited by hand;
 # the error says what is wrong and the hub runs without a mirror instead of not at all.
@@ -76,6 +92,7 @@ def _mirror_settings(entry: OcppHubConfigEntry) -> MirrorSettings | None:
             url=url,
             user=entry.options.get(CONF_VENDOR_USER) or None,
             password=entry.options.get(CONF_VENDOR_PASSWORD) or None,
+            commands=entry.options.get(CONF_VENDOR_COMMANDS) or COMMANDS_REJECT,
         )
     except MirrorSettingsError as error:
         _LOGGER.error("The vendor mirror is off, its options are invalid (%s): %s", error.code, error)
@@ -91,10 +108,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     sessions = SessionStore(hass)
     await sessions.async_load()
     listener = HubListener(hass, entry.entry_id, build, sessions, mirror_enabled=settings is not None)
-    mirror = VendorMirror(settings) if settings is not None else None
+    policy = _control_policy(entry)
+    mirror = VendorMirror(settings, policy=policy) if settings is not None else None
     if mirror is not None:
         await mirror.start()
-    central = CentralSystem([listener, *([mirror] if mirror is not None else [])])
+    central = CentralSystem([listener, *([mirror] if mirror is not None else [])], policy=policy)
     port = entry.data[CONF_PORT]
     try:
         await central.start(BIND_HOST, port)
