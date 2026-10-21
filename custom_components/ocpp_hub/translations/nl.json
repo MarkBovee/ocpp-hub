@@ -29,7 +29,7 @@
         "data_description": {
           "vendor_url": "Begint met ws:// of wss:// en bevat de host, de poort en het pad van de OCPP-backend van de fabrikant, zonder het serienummer van de laadpaal en zonder inloggegevens.",
           "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
-          "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden."
+          "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft."
         }
       }
     },

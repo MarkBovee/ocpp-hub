@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
@@ -21,15 +22,27 @@ ERROR_FIELDS = {
 }
 
 
+# Whether two vendor addresses point at the same host and port; an address that cannot be read matches nothing.
+# A stored password may only follow an address to the same server: it must never be sent to a new one unasked.
+def _same_server(first: str, second: str) -> bool:
+    try:
+        a, b = urlsplit(first), urlsplit(second)
+        return bool(a.hostname) and (a.hostname, a.port) == (b.hostname, b.port)
+    except ValueError:
+        return False
+
+
 # Turn the submitted options form into the options to store, or raise MirrorSettingsError when they cannot work.
 # An empty URL switches the mirror off and forgets the credentials. A password left empty keeps the stored one, because
-# the form never shows it; that only applies while a user name is still set, so a password cannot linger without one.
+# the form never shows it; that only applies while a user name is still set and the address still points at the same
+# server, so a password can neither linger without a user nor travel to a new host.
 def vendor_options(form: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[str, str]:
     url = (form.get(CONF_VENDOR_URL) or "").strip()
     if not url:
         return {}
     user = (form.get(CONF_VENDOR_USER) or "").strip()
-    password = form.get(CONF_VENDOR_PASSWORD) or (stored.get(CONF_VENDOR_PASSWORD, "") if user else "")
+    keeps_stored = bool(user) and _same_server(url, stored.get(CONF_VENDOR_URL, ""))
+    password = form.get(CONF_VENDOR_PASSWORD) or (stored.get(CONF_VENDOR_PASSWORD, "") if keeps_stored else "")
     MirrorSettings(url=url, user=user or None, password=password or None)
     options = {CONF_VENDOR_URL: url}
     if user:

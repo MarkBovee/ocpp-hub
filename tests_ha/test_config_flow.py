@@ -98,8 +98,8 @@ async def test_invalid_options_are_refused(hass: HomeAssistant, form: dict[str, 
     assert entry.options == {}
 
 
-# Intent: an empty password keeps the stored one, and the form never shows it.
-# Why: the owner changes the URL without retyping a secret that the form cannot display anyway.
+# Intent: an empty password keeps the stored one while the host stays the same, and the form never shows it.
+# Why: the owner changes the path without retyping a secret that the form cannot display anyway.
 async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
     stored = {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror", CONF_VENDOR_PASSWORD: "s3cret"}
     entry = _entry(hass, stored)
@@ -109,12 +109,25 @@ async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
     }
 
     result = await hass.config_entries.options.async_configure(
-        flow["flow_id"], user_input={CONF_VENDOR_URL: "wss://new.example/ocpp", CONF_VENDOR_USER: "mirror"}
+        flow["flow_id"], user_input={CONF_VENDOR_URL: "wss://old.example/v2/ocpp", CONF_VENDOR_USER: "mirror"}
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {**stored, CONF_VENDOR_URL: "wss://new.example/ocpp"}
+    assert entry.options == {**stored, CONF_VENDOR_URL: "wss://old.example/v2/ocpp"}
     assert suggested == {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror"}
+
+
+# Intent: an address on another host or port does not inherit the stored password; the form asks for one again.
+# Why: the stored password belongs to the old server and must never be sent to a new one without being retyped.
+@pytest.mark.parametrize("new_url", ["wss://new.example/ocpp", "wss://old.example:8443/ocpp", "ws://[::1/ocpp"])
+async def test_new_server_does_not_inherit_the_stored_password(hass: HomeAssistant, new_url: str) -> None:
+    stored = {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror", CONF_VENDOR_PASSWORD: "s3cret"}
+    entry = _entry(hass, stored)
+
+    result = await _submit(hass, entry, {CONF_VENDOR_URL: new_url, CONF_VENDOR_USER: "mirror"})
+
+    assert result["type"] is FlowResultType.FORM and entry.options == stored
+    assert set(result["errors"].values()) <= {"credentials_incomplete", "invalid_url"} and result["errors"]
 
 
 # Intent: clearing the address switches the mirror off and forgets the credentials.

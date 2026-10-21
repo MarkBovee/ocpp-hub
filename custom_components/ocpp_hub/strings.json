@@ -29,7 +29,7 @@
         "data_description": {
           "vendor_url": "Starts with ws:// or wss:// and holds the host, the port and the path of the manufacturer's OCPP backend, without the charger's serial number and without credentials.",
           "vendor_user": "Only if the backend asks for a user name. Set a password with it.",
-          "vendor_password": "Never shown again. Leave empty to keep the stored password."
+          "vendor_password": "Never shown again. Leave empty to keep the stored password; it is only kept while the host of the address stays the same."
         }
       }
     },

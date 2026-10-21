@@ -118,7 +118,7 @@ async def test_bad_requests_get_errors_and_the_link_survives(start_hub) -> None:
     assert alive[0] == 3
 
 
-# Intent: after boot the hub reads the configuration and stores the supported feature profiles.
+# Intent: after boot the hub reads the configuration, stores the feature profiles and keeps only the asked keys.
 # Why: whether smart charging is offered at all decides if a current limit can ever be set.
 async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> None:
     hub = await start_hub(setup_delay_s=0.0)
@@ -133,6 +133,7 @@ async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> No
                 {"key": "SupportedFeatureProfiles", "readonly": True, "value": "Core,FirmwareManagement,SmartCharging"},
                 {"key": "MeterValuesSampledData", "readonly": False, "value": "Energy.Active.Import.Register"},
                 {"key": "MeterValueSampleInterval", "readonly": False, "value": "15"},
+                {"key": "AuthorizationKey", "readonly": False, "value": "not-asked-for"},
             ]
         },
     )
@@ -145,6 +146,7 @@ async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> No
     await asyncio.sleep(0.05)
     assert hub.listener.latest.features == {"Core", "FirmwareManagement", "SmartCharging"}
     assert hub.listener.latest.configuration["MeterValuesSampledData"] == change[3]["value"]
+    assert "AuthorizationKey" not in hub.listener.latest.configuration
 
 
 # Intent: a metering setting the charger already has is not written again.

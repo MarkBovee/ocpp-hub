@@ -40,7 +40,12 @@ class MirrorSettings:
 
     # Reject settings that cannot work, at the boundary, so a typo shows up as an error and not as a silent retry loop.
     def __post_init__(self) -> None:
-        parts = urlsplit(self.url)
+        try:
+            parts = urlsplit(self.url)
+            # Reading the port is what raises for a port that is not a number.
+            _ = parts.port
+        except ValueError as error:
+            raise MirrorSettingsError("invalid_url", "the vendor URL cannot be read as a web address") from error
         if parts.scheme not in ("ws", "wss") or not parts.hostname:
             raise MirrorSettingsError("invalid_url", "the vendor URL must start with ws:// or wss:// and name a host")
         if parts.username is not None or parts.password is not None:

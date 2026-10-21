@@ -6,6 +6,7 @@ import logging
 import socket
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
@@ -94,7 +95,7 @@ async def test_entity_ids_are_stable_and_voltage_is_off_by_default(
     voltage = registry.async_get("sensor.ocpp_hub_test0001_voltage_l1")
     assert voltage is not None and voltage.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     assert state_of(hass, "sensor.ocpp_hub_test0001_voltage_l1") is None
-    assert registry.async_get(STATUS).unique_id == "TEST0001_status"
+    assert registry.async_get(STATUS).unique_id == "TEST0001:status"
     assert state_of(hass, MIRROR_STATUS) is None
 
 
@@ -205,3 +206,25 @@ async def test_invalid_options_run_without_a_mirror(
 
     assert entry.state is ConfigEntryState.LOADED and entry.runtime_data.mirror is None
     assert "invalid_url" in caplog.text
+
+
+# Intent: a setup that fails after the server started closes the server and the mirror again.
+# Why: Home Assistant never unloads an entry whose setup failed, so otherwise the port stays taken until a restart
+# and every retry fails with "cannot listen".
+async def test_failed_setup_releases_the_port_and_the_mirror(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_PORT: 0}, options={CONF_VENDOR_URL: "ws://127.0.0.1:1/ocpp"})
+    entry.add_to_hass(hass)
+    seen: dict[str, Any] = {}
+
+    # Remember the running server, then fail the way a broken platform would.
+    async def broken_forward(config_entry: MockConfigEntry, platforms: object) -> None:
+        seen["port"] = config_entry.runtime_data.central.port
+        seen["mirror"] = config_entry.runtime_data.mirror
+        raise RuntimeError("platform setup failed")
+
+    with patch.object(hass.config_entries, "async_forward_entry_setups", broken_forward):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+
+    assert entry.state is ConfigEntryState.SETUP_ERROR and seen["mirror"] is not None
+    with socket.socket() as probe:
+        assert probe.connect_ex(("127.0.0.1", seen["port"])) != 0

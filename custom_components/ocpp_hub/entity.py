@@ -29,7 +29,8 @@ class OcppHubEntity(Entity):
         self._entry_id = entry_id
         self._cp_id = cp_id
         self._snapshot: ChargerSnapshot = runtime.listener.snapshots[cp_id]
-        self._attr_unique_id = f"{cp_id}_{key}"
+        # A colon cannot occur in a key, so "a" with "mirror_status" and "a_mirror" with "status" stay apart.
+        self._attr_unique_id = f"{cp_id}:{key}"
         self.entity_id = f"{platform}.{DOMAIN}_{slugify(cp_id)}_{key}"
 
     @property

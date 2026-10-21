@@ -207,6 +207,8 @@ def test_trigger_message_answers(payload: dict[str, Any], can: bool, expected: o
     [
         ({"url": "http://vendor.example/ocpp"}, "invalid_url"),
         ({"url": "ws://"}, "invalid_url"),
+        ({"url": "ws://[::1/ocpp"}, "invalid_url"),
+        ({"url": "ws://vendor.example:abc/ocpp"}, "invalid_url"),
         ({"url": "wss://user:secret@vendor.example/ocpp"}, "credentials_in_url"),
         ({"user": "only-a-user"}, "credentials_incomplete"),
         ({"password": "only-a-password"}, "credentials_incomplete"),

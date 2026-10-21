@@ -73,8 +73,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
         if mirror is not None:
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
-    entry.runtime_data = HubRuntime(central, listener, mirror)
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        entry.runtime_data = HubRuntime(central, listener, mirror)
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
+        # server and the mirror, and the port would stay taken until a restart. Clean up, then let the error go on.
+        await _stop_runtime(central, mirror)
+        raise
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     _LOGGER.info(
         "[build %s] OCPP Hub listening on port %s, vendor mirror %s", build, central.port, "on" if mirror else "off"
@@ -88,13 +94,19 @@ async def _async_reload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) ->
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-# Unload one config entry: remove the entities, close the chargers, then close the mirror.
-# The central system stops first so every charger's last frames still reach the vendor before its link closes.
+# Close the server, then the mirror, and close the mirror even when closing the server raised.
+# No link to the vendor may outlive the entry. Frames still waiting for the vendor are lost; the README lists that.
+async def _stop_runtime(central: CentralSystem, mirror: VendorMirror | None) -> None:
+    try:
+        await central.stop()
+    finally:
+        if mirror is not None:
+            await mirror.stop()
+
+
+# Unload one config entry: remove the entities, close the chargers, then the mirror.
 async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        runtime = entry.runtime_data
-        await runtime.central.stop()
-        if runtime.mirror is not None:
-            await runtime.mirror.stop()
+        await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
     return unloaded

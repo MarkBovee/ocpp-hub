@@ -369,13 +369,14 @@ class ChargerSession:
             _LOGGER.warning("Setup of charger %s did not complete: %s", self.cp_id, error)
 
     # Read the configuration keys that decide what the hub can do and store them in the snapshot.
-    # SupportedFeatureProfiles tells whether smart charging is offered at all.
+    # SupportedFeatureProfiles tells whether smart charging is offered at all. Only the keys asked for are kept: some
+    # chargers answer with every key they have, and the snapshot is shown in diagnostics and to the vendor.
     async def _read_configuration(self) -> None:
         answer = await self.call("GetConfiguration", commands.get_configuration(CONFIG_KEYS))
         configuration = {
             str(item["key"]): str(item.get("value", ""))
             for item in answer.get("configurationKey", [])
-            if isinstance(item, dict) and "key" in item
+            if isinstance(item, dict) and item.get("key") in CONFIG_KEYS
         }
         profiles = configuration.get("SupportedFeatureProfiles", "")
         features = frozenset(part.strip() for part in profiles.split(",") if part.strip())
