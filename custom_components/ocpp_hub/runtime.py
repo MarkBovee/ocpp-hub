@@ -30,9 +30,11 @@ def _has_booted(snapshot: ChargerSnapshot) -> bool:
 
 # A string a charger supplied, made safe to show in a notification.
 # Vendor, model and firmware come from a device on the network, and the notification is rendered as Markdown, so the
-# text is cut to one short line without backticks and put in a code span, where Markdown shows it as it is.
+# text is cut to one short line without backticks or control characters (a bidi override could spoof how it reads) and
+# put in a code span, where Markdown shows it as it is.
 def _as_code(value: str | None) -> str:
-    text = re.sub(r"[`\s]+", " ", value or "").strip()[:64]
+    printable = "".join(char for char in value or "" if char.isprintable() or char.isspace())
+    text = re.sub(r"[`\s]+", " ", printable).strip()[:64]
     return f"`{text or '-'}`"
 
 

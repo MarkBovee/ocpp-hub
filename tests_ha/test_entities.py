@@ -240,7 +240,7 @@ async def test_connect_notification_shows_charger_strings_as_plain_text(
     entry = await setup_hub()
     charger: FakeCharger = await connect_charger(entry)
 
-    await charger.boot(chargePointVendor="![x](http://example.invalid/p.png)", chargePointModel="NEO_{0}`\nx")
+    await charger.boot(chargePointVendor="![x](http://example.invalid/p.png)", chargePointModel="NEO_{0}`\nx\u202e")
     notifications = persistent_notification._async_get_or_create_notifications(hass)
     await wait_for(hass, lambda: notifications, "no notification")
 
