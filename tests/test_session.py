@@ -277,3 +277,16 @@ async def test_charger_that_introduces_itself_is_not_asked(start_hub) -> None:
 
     with pytest.raises(TimeoutError):
         await charger.next_hub_call(timeout=0.8)
+
+
+# Intent: stopping the hub closes every charger connection with the "service restart" code.
+# Why: the default "going away" code made the Raedian NEO wait for minutes before it dialled again after a reload.
+async def test_stopping_the_hub_tells_chargers_it_is_restarting(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    await charger.boot()
+
+    await hub.central.stop()
+    await charger.wait_closed()
+
+    assert charger.close_code == 1012
