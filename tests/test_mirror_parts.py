@@ -233,3 +233,26 @@ def test_credentials_are_used_for_the_header_and_kept_out_of_repr() -> None:
     assert settings.auth_header is not None and settings.auth_header[0] == "Authorization"
     assert "s3cret" not in repr(settings) and settings.use_tls
     assert MirrorSettings(url="ws://vendor.example/ocpp").auth_header is None
+
+
+# Intent: the Raedian address (secure websocket, explicit port, path with a trailing slash) is accepted without
+# credentials, uses TLS, sends no auth header, and the charger id is appended once to the path.
+# Why: this is the endpoint the NEO was measured to use; a refactor of the URL checks must not turn it away.
+def test_the_raedian_address_is_accepted_and_gets_the_charger_id_appended() -> None:
+    from ocpp_hub_core.frames import join_websocket_url
+
+    settings = MirrorSettings(url="wss://cloud-protocol.raedian.com:9043/ocpp/")
+
+    assert settings.use_tls and settings.auth_header is None
+    assert join_websocket_url(settings.url, "CHARGER1") == "wss://cloud-protocol.raedian.com:9043/ocpp/CHARGER1"
+
+
+# Intent: the same address without the trailing slash gives the same connection URL.
+# Why: owners type it both ways, and a missing slash must not glue the charger id onto "ocpp".
+def test_the_vendor_address_works_with_and_without_a_trailing_slash() -> None:
+    from ocpp_hub_core.frames import join_websocket_url
+
+    with_slash = join_websocket_url("wss://vendor.example:9043/ocpp/", "CP1")
+    without_slash = join_websocket_url("wss://vendor.example:9043/ocpp", "CP1")
+
+    assert with_slash == without_slash == "wss://vendor.example:9043/ocpp/CP1"
