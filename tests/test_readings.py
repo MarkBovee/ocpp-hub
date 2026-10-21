@@ -97,3 +97,45 @@ def test_zero_when_nothing_flows_and_unknown_only_when_nothing_is_known() -> Non
     assert readings.phase_current_a(charging, "L2") == 0.0
     assert readings.power_w(no_status) == 4000.0
     assert readings.phase_current_a(no_current, "L1") is None
+
+
+# Intent: plugged in, car charging and problem come from the socket's status and error code, and stay unknown when the
+# status says nothing: available is unplugged, the five connected statuses are plugged, and reserved or faulted say
+# nothing about the plug.
+# Why: these become automation triggers (the car arrived, charging started, something broke), so a guess would fire
+# them.
+@pytest.mark.parametrize(
+    ("status", "plugged", "charging"),
+    [
+        ("Available", False, False),
+        ("Preparing", True, False),
+        ("Charging", True, True),
+        ("SuspendedEV", True, False),
+        ("SuspendedEVSE", True, False),
+        ("Finishing", True, False),
+        ("Reserved", None, False),
+        ("Faulted", None, False),
+        (None, None, None),
+    ],
+)
+def test_plugged_in_and_car_charging_follow_the_status(
+    status: str | None, plugged: bool | None, charging: bool | None
+) -> None:
+    snapshot = _snapshot(status)
+
+    assert readings.plugged_in(snapshot) is plugged and readings.car_charging(snapshot) is charging
+
+
+# Intent: the problem flag and the error code follow the connector: no error is fine, a faulted status or any other code
+# is a problem, and a code the table does not know is a problem with no key.
+# Why: a charger that says something is wrong must show as a problem even when this integration cannot name it.
+def test_problem_and_error_code_follow_the_connector() -> None:
+    fine = ChargerSnapshot("T", connectors={1: ConnectorState(1, "Available", "NoError")})
+    broken = ChargerSnapshot("T", connectors={1: ConnectorState(1, "Faulted", "GroundFailure")})
+    strange = ChargerSnapshot("T", connectors={1: ConnectorState(1, "Available", "SomethingNew")})
+    nothing = ChargerSnapshot("T")
+
+    assert (readings.problem(fine), readings.error_code(fine)) == (False, "no_error")
+    assert (readings.problem(broken), readings.error_code(broken)) == (True, "ground_failure")
+    assert (readings.problem(strange), readings.error_code(strange)) == (True, None)
+    assert (readings.problem(nothing), readings.error_code(nothing)) == (None, None)

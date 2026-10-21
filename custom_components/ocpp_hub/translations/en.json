@@ -88,11 +88,50 @@
       },
       "current_session": {
         "name": "Current session"
+      },
+      "error_code": {
+        "name": "Error code",
+        "state": {
+          "no_error": "No error",
+          "connector_lock_failure": "Connector lock failure",
+          "ev_communication_error": "Vehicle communication error",
+          "ground_failure": "Ground failure",
+          "high_temperature": "High temperature",
+          "internal_error": "Internal error",
+          "local_list_conflict": "Local list conflict",
+          "other_error": "Other error",
+          "over_current_failure": "Over current",
+          "power_meter_failure": "Power meter failure",
+          "power_switch_failure": "Power switch failure",
+          "reader_failure": "Reader failure",
+          "reset_failure": "Reset failure",
+          "under_voltage": "Under voltage",
+          "over_voltage": "Over voltage",
+          "weak_signal": "Weak signal"
+        }
+      },
+      "model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "mirror_queue": {
+        "name": "Mirror queue"
       }
     },
     "binary_sensor": {
       "connected": {
         "name": "Connected"
+      },
+      "plugged_in": {
+        "name": "Plugged in"
+      },
+      "car_charging": {
+        "name": "Car charging"
+      },
+      "problem": {
+        "name": "Problem"
       }
     },
     "number": {

@@ -88,11 +88,50 @@
       },
       "current_session": {
         "name": "Huidige sessie"
+      },
+      "error_code": {
+        "name": "Foutcode",
+        "state": {
+          "no_error": "Geen fout",
+          "connector_lock_failure": "Vergrendeling mislukt",
+          "ev_communication_error": "Communicatiefout met de auto",
+          "ground_failure": "Aardfout",
+          "high_temperature": "Te hoge temperatuur",
+          "internal_error": "Interne fout",
+          "local_list_conflict": "Conflict in lokale lijst",
+          "other_error": "Andere fout",
+          "over_current_failure": "Overstroom",
+          "power_meter_failure": "Fout in de energiemeter",
+          "power_switch_failure": "Fout in de schakelaar",
+          "reader_failure": "Fout in de kaartlezer",
+          "reset_failure": "Reset mislukt",
+          "under_voltage": "Onderspanning",
+          "over_voltage": "Overspanning",
+          "weak_signal": "Zwak signaal"
+        }
+      },
+      "model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "mirror_queue": {
+        "name": "Wachtrij mirror"
       }
     },
     "binary_sensor": {
       "connected": {
         "name": "Verbonden"
+      },
+      "plugged_in": {
+        "name": "Aangesloten"
+      },
+      "car_charging": {
+        "name": "Auto laadt"
+      },
+      "problem": {
+        "name": "Probleem"
       }
     },
     "number": {

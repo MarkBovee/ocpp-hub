@@ -110,3 +110,60 @@ def session_duration_s(snapshot: ChargerSnapshot) -> int | None:
 # Whether a charge is running on the socket connector.
 def charge_running(snapshot: ChargerSnapshot) -> bool:
     return _running_charge(snapshot) is not None
+
+
+# The sockets statuses with a vehicle connected. "Available" means nobody is plugged in; the others (reserved,
+# unavailable, faulted) say nothing about the plug.
+_PLUGGED_STATUSES = frozenset({"preparing", "charging", "suspended_evse", "suspended_ev", "finishing"})
+
+# OCPP 1.6 ChargePointErrorCode values as stable lower-case keys.
+ERROR_CODE_KEYS = {
+    "ConnectorLockFailure": "connector_lock_failure",
+    "EVCommunicationError": "ev_communication_error",
+    "GroundFailure": "ground_failure",
+    "HighTemperature": "high_temperature",
+    "InternalError": "internal_error",
+    "LocalListConflict": "local_list_conflict",
+    "NoError": "no_error",
+    "OtherError": "other_error",
+    "OverCurrentFailure": "over_current_failure",
+    "PowerMeterFailure": "power_meter_failure",
+    "PowerSwitchFailure": "power_switch_failure",
+    "ReaderFailure": "reader_failure",
+    "ResetFailure": "reset_failure",
+    "UnderVoltage": "under_voltage",
+    "OverVoltage": "over_voltage",
+    "WeakSignal": "weak_signal",
+}
+ERROR_CODE_OPTIONS = list(ERROR_CODE_KEYS.values())
+
+
+# Whether a vehicle is connected to the socket; None when the status says nothing about it.
+def plugged_in(snapshot: ChargerSnapshot) -> bool | None:
+    status = connector_status(snapshot)
+    if status is None:
+        return None
+    if status in _PLUGGED_STATUSES:
+        return True
+    return False if status == "available" else None
+
+
+# Whether the socket is delivering power to the car right now; None before the first status.
+def car_charging(snapshot: ChargerSnapshot) -> bool | None:
+    status = connector_status(snapshot)
+    return None if status is None else status == "charging"
+
+
+# The error code of the socket as a stable key, or None before the first status or for a code this table does not know.
+def error_code(snapshot: ChargerSnapshot) -> str | None:
+    connector = snapshot.connectors.get(PRIMARY_CONNECTOR)
+    return ERROR_CODE_KEYS.get(connector.error_code) if connector is not None else None
+
+
+# Whether the socket reports a problem: a faulted status or an error code other than "no error".
+# An unknown code counts as a problem, because the charger said something is wrong; None before the first status.
+def problem(snapshot: ChargerSnapshot) -> bool | None:
+    connector = snapshot.connectors.get(PRIMARY_CONNECTOR)
+    if connector is None:
+        return None
+    return connector.status == "Faulted" or connector.error_code != "NoError"

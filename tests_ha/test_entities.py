@@ -31,6 +31,7 @@ STATUS = "sensor.ocpp_hub_test0001_status"
 POWER = "sensor.ocpp_hub_test0001_power"
 CONNECTED = "binary_sensor.ocpp_hub_test0001_connected"
 MIRROR_STATUS = "sensor.ocpp_hub_test0001_mirror_status"
+MIRROR_QUEUE = "sensor.ocpp_hub_test0001_mirror_queue"
 
 METER_VALUES = {
     "connectorId": 1,
@@ -70,10 +71,8 @@ async def test_entities_follow_the_charger(
     assert float(state_of(hass, "sensor.ocpp_hub_test0001_energy") or 0) == 12.345
     assert [state_of(hass, f"sensor.ocpp_hub_test0001_current_l{n}") for n in (1, 2, 3)] == ["10.5", "10.4", "10.6"]
     assert state_of(hass, "sensor.ocpp_hub_test0001_current_offered") == "16.0"
-    assert (
-        state_of(hass, "sensor.ocpp_hub_test0001_model") is None
-        and state_of(hass, "sensor.ocpp_hub_test0001_firmware") is None
-    )
+    assert state_of(hass, "sensor.ocpp_hub_test0001_model") == "NEO_22T_A"
+    assert state_of(hass, "sensor.ocpp_hub_test0001_firmware") == "s8100000001131&2.0.5_134"
     device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, "TEST0001"), entry.entry_id)
     assert device is not None and device.manufacturer == "RAEDIAN" and device.model == "NEO_22T_A"
 
@@ -165,8 +164,8 @@ async def test_mirror_forwards_and_reports(
         # Refresh the mirror sensor and tell whether it shows a connected link with an empty queue.
         async def mirror_connected() -> bool:
             await async_update_entity(hass, MIRROR_STATUS)
-            status = hass.states.get(MIRROR_STATUS)
-            return status is not None and status.state == "connected" and status.attributes["queue_length"] == 0
+            await async_update_entity(hass, MIRROR_QUEUE)
+            return state_of(hass, MIRROR_STATUS) == "connected" and state_of(hass, MIRROR_QUEUE) == "0"
 
         for _ in range(100):
             if await mirror_connected():
@@ -261,7 +260,7 @@ async def test_retired_entities_are_removed_from_the_registry(
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_PORT: 0})
     entry.add_to_hass(hass)
     registry = er.async_get(hass)
-    for key in ("model", "firmware", "mirror_queue", "session_energy", "session_started", "session_duration"):
+    for key in ("session_energy", "session_started", "session_duration"):
         registry.async_get_or_create("sensor", DOMAIN, f"TEST0001:{key}", config_entry=entry)
     kept = registry.async_get_or_create("sensor", DOMAIN, "TEST0001:power", config_entry=entry)
 
@@ -271,3 +270,32 @@ async def test_retired_entities_are_removed_from_the_registry(
     left = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
     assert left == {kept.unique_id}
     await hass.config_entries.async_unload(entry.entry_id)
+
+
+# Intent: the plugged-in, car-charging and problem sensors and the error code follow the status the charger reports, and
+# the raw frames reach the log only when the frames logger is set to debug.
+# Why: they are the triggers for automations; and a frame can hold an id tag, so it must never be logged by default.
+async def test_socket_sensors_follow_the_status_and_frames_are_logged_only_on_debug(
+    hass: HomeAssistant,
+    setup_hub: Callable[..., Awaitable[MockConfigEntry]],
+    connect_charger: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entry = await setup_hub()
+    charger = await connect_charger(entry)
+    await charger.boot()
+    await wait_for(hass, lambda: state_of(hass, STATUS) is not None, "no entities")
+    plugged = "binary_sensor.ocpp_hub_test0001_plugged_in"
+    car = "binary_sensor.ocpp_hub_test0001_car_charging"
+    problem = "binary_sensor.ocpp_hub_test0001_problem"
+
+    await charger.call("StatusNotification", {"connectorId": 1, "status": "Charging", "errorCode": "NoError"})
+    await wait_for(hass, lambda: state_of(hass, car) == "on", "car charging not shown")
+    quiet = [r.getMessage() for r in caplog.records if "ocpp_hub.frames" in r.name]
+    caplog.set_level(logging.DEBUG, logger="custom_components.ocpp_hub.frames")
+    await charger.call("StatusNotification", {"connectorId": 1, "status": "Faulted", "errorCode": "GroundFailure"})
+    await wait_for(hass, lambda: state_of(hass, problem) == "on", "problem not shown")
+
+    assert state_of(hass, plugged) == "unknown" and state_of(hass, car) == "off"
+    assert state_of(hass, "sensor.ocpp_hub_test0001_error_code") == "ground_failure"
+    assert quiet == [] and any("GroundFailure" in r.getMessage() for r in caplog.records if "frames" in r.name)
