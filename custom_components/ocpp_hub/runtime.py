@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.translation import async_get_translations
 
-from .const import DOMAIN, charger_notification_id, new_charger_signal, session_signal, snapshot_signal
+from .const import DOMAIN, PACKAGE_LOGGER, charger_notification_id, new_charger_signal, session_signal, snapshot_signal
 from .core.central import CentralSystem
 from .core.frames import Frame
 from .core.mirror import VendorMirror
@@ -21,6 +21,8 @@ from .core.session import ChargerSession
 from .session_store import SessionStore
 
 _LOGGER = logging.getLogger(__name__)
+# The raw OCPP frames, at debug level only; a frame can hold an id tag or a serial number, so it is off by default.
+_FRAME_LOGGER = logging.getLogger(f"{PACKAGE_LOGGER}.frames")
 
 
 # True once the charger has said who it is (its BootNotification arrived).
@@ -111,9 +113,11 @@ class HubListener:
             notification_id=charger_notification_id(snapshot.cp_id),
         )
 
-    # Frames are the mirror's business, not the entities'.
+    # Frames are the mirror's business, not the entities'. They are only written to the log, and only at debug level of
+    # the "frames" logger, so the owner can see exactly what a charger sends when deciding what else is worth a sensor.
     def on_frame(self, cp_id: str, sender: str, frame: Frame) -> None:
-        return None
+        if _FRAME_LOGGER.isEnabledFor(logging.DEBUG):
+            _FRAME_LOGGER.debug("%s %s %s", cp_id, sender, frame)
 
     # Keep a finished charge in the history and tell the entities that show it.
     def on_session_finished(self, session: ChargeSession) -> None:

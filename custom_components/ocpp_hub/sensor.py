@@ -57,6 +57,14 @@ CHARGER_SENSORS: tuple[ChargerSensorDescription, ...] = (
         value_fn=readings.connector_status,
     ),
     ChargerSensorDescription(
+        key="error_code",
+        translation_key="error_code",
+        device_class=SensorDeviceClass.ENUM,
+        options=readings.ERROR_CODE_OPTIONS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=readings.error_code,
+    ),
+    ChargerSensorDescription(
         key="power",
         translation_key="power",
         device_class=SensorDeviceClass.POWER,
@@ -106,6 +114,18 @@ CHARGER_SENSORS: tuple[ChargerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=readings.current_offered_a,
     ),
+    ChargerSensorDescription(
+        key="model",
+        translation_key="model",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.info.model,
+    ),
+    ChargerSensorDescription(
+        key="firmware",
+        translation_key="firmware",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.info.firmware,
+    ),
 )
 
 
@@ -125,6 +145,7 @@ async def async_setup_entry(
         if runtime.mirror is not None:
             entities += [
                 MirrorStatusSensor(runtime, entry.entry_id, cp_id),
+                MirrorQueueSensor(runtime, entry.entry_id, cp_id),
             ]
         return entities
 
@@ -317,3 +338,20 @@ class MirrorStatusSensor(MirrorEntity, SensorEntity):
             "dropped_frames": status.dropped_frames,
             "unmapped_transactions": status.unmapped_transactions,
         }
+
+
+class MirrorQueueSensor(MirrorEntity, SensorEntity):
+    """How many frames wait for the vendor backend."""
+
+    _attr_translation_key = "mirror_queue"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    # Build the sensor for one charger.
+    def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
+        super().__init__(runtime, entry_id, cp_id, "sensor", "mirror_queue")
+
+    @property
+    def native_value(self) -> int:
+        """The number of frames waiting; zero when there is no link."""
+        status = self._status()
+        return status.queue_length if status is not None else 0

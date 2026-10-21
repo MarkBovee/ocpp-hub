@@ -32,9 +32,11 @@ When the integration stops, the hub drops the charger's connections instead of c
 
 ## Entities
 
-A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, and `binary_sensor.ocpp_hub_<charger id>_connected`. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. The model and firmware are on the device, not separate sensors. While the socket is known not to deliver (any status except charging), power and the phase currents read 0 instead of unknown, because nothing flows; a phase that the meter leaves out while it reports others also reads 0. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, `_model`, `_firmware`, the diagnostic `_error_code`, and `binary_sensor.ocpp_hub_<charger id>_connected`, `_plugged_in` (a car is connected), `_car_charging` (the socket is delivering) and `_problem` (a faulted status or an error code other than no error). The last three come from the status and error code the charger already reports; they are unknown until the first status. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. While the socket is known not to deliver (any status except charging), power and the phase currents read 0 instead of unknown, because nothing flows; a phase that the meter leaves out while it reports others also reads 0. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
 
 The NEO sends a reading with only the energy register on the clock (at 12:00, 12:30 and so on). The hub keeps what such a partial reading does not carry, so power and currents do not vanish for a moment.
+
+To see exactly what a charger sends, set the logger `custom_components.ocpp_hub.frames` to `debug` (Developer tools, Actions, `logger.set_level`). Every OCPP frame, in both directions, is then written to the log; it can hold id tags and serial numbers, so leave it off otherwise.
 
 ## Charge sessions
 
@@ -50,7 +52,7 @@ Open the integration's options and fill in:
 - **Raedian (NEO and other Raedian chargers):** use `wss://cloud-protocol.raedian.com:9043/ocpp/` and leave user name and password empty. The port is 9043; the installer app hides the address of its default profile, and port 443 does not answer. Verified on a NEO 22 kW: the vendor accepts the connection and its app shows the charger as online.
 - **User name and password:** only if the backend asks for them. They are sent as HTTP Basic authentication; the password field never shows what is stored, and an empty field keeps it.
 
-Per charger there is one diagnostic sensor, `_mirror_status` (idle, connecting or connected, with the last error, the number of frames waiting and the counters as attributes).
+Per charger there are two diagnostic sensors, `_mirror_status` (idle, connecting or connected, with the last error, the number of frames waiting and the counters as attributes) and `_mirror_queue` (frames waiting).
 
 What the mirror does and does not do:
 

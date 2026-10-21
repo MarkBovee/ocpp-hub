@@ -60,7 +60,6 @@ def session_signal(entry_id: str, cp_id: str) -> str:
     return f"{DOMAIN}_session_{entry_id}_{cp_id}"
 
 
-# Entity keys that existed once and were dropped: the model and firmware are on the device itself, the length of the
-# mirror queue is an attribute of the mirror status, and the loose session sensors became one current-session
-# sensor. Their registry entries are removed at setup.
-RETIRED_ENTITY_KEYS = ("model", "firmware", "mirror_queue", "session_energy", "session_started", "session_duration")
+# Entity keys that existed once and were dropped: the three loose session sensors became one current-session sensor.
+# Their registry entries are removed at setup.
+RETIRED_ENTITY_KEYS = ("session_energy", "session_started", "session_duration")
