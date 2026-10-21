@@ -98,8 +98,11 @@ class SessionSettings:
 
     heartbeat_interval_s: int = 300
     call_timeout_s: float = 15.0
-    # A charger that has just connected ignores requests for a while, so setup waits this long.
-    setup_delay_s: float = 5.0
+    # A charger that has just connected ignores requests for a while (the NEO for about ten seconds, and a first
+    # request at five seconds was never answered), so setup waits this long before its first try.
+    setup_delay_s: float = 15.0
+    # How long setup waits before each further try when the charger did not answer; no more tries after the last one.
+    setup_retry_delays_s: tuple[float, ...] = (30.0, 60.0, 120.0, 300.0)
     meter_sample_interval_s: int = 15
     measurands: str = "Energy.Active.Import.Register,Power.Active.Import,Current.Import,Voltage,Current.Offered"
 
@@ -359,14 +362,23 @@ class ChargerSession:
         return {}
 
     # After a charger booted: read its configuration and make sure it sends the meter values the hub needs.
-    # Failures are logged, not raised; the charger works without this and the next boot tries again.
+    # A charger that does not answer is asked again a few times; failures are logged, not raised, because the charger
+    # works without this and its next boot starts over.
     async def _post_boot_setup(self) -> None:
-        await asyncio.sleep(self._settings.setup_delay_s)
-        try:
-            await self._read_configuration()
-            await self._ensure_metering()
-        except CallError as error:
-            _LOGGER.warning("Setup of charger %s did not complete: %s", self.cp_id, error)
+        delays = (self._settings.setup_delay_s, *self._settings.setup_retry_delays_s)
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+            try:
+                await self._read_configuration()
+                await self._ensure_metering()
+            except CallError as error:
+                _LOGGER.warning(
+                    "Setup of charger %s did not complete (try %s of %s): %s", self.cp_id, attempt, len(delays), error
+                )
+            else:
+                _LOGGER.info("Setup of charger %s completed on try %s", self.cp_id, attempt)
+                return
+        _LOGGER.warning("Giving up on the setup of charger %s until its next boot", self.cp_id)
 
     # Read the configuration keys that decide what the hub can do and store them in the snapshot.
     # SupportedFeatureProfiles tells whether smart charging is offered at all. Only the keys asked for are kept: some
