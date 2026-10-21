@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -102,17 +103,17 @@ def parse_meter_values(payload: dict[str, Any], now: datetime) -> MeterSample | 
     )
 
 
-# Combine a new reading with the previous one: what the new reading lacks is kept from the old one.
-# The NEO sends a reading with only the energy register on the clock (12:00, 12:30 and so on); replacing the whole
-# reading with it made power, currents and the offered current vanish for fifteen seconds at a time.
+# Combine a new reading with the previous one. A reading with nothing but the energy register keeps everything else
+# from the one before; any other reading replaces it as it is, apart from the energy register, which is kept when the
+# new reading has none.
+# The NEO sends such an energy-only reading on the clock (12:00, 12:30 and so on); replacing the whole reading with it
+# made power, currents and the offered current vanish for fifteen seconds at a time. A full reading must replace the
+# phases, though: a phase that is no longer reported (a one-phase car after a three-phase one) must not keep its value.
 def merge_samples(previous: MeterSample | None, new: MeterSample) -> MeterSample:
     if previous is None:
         return new
-    return MeterSample(
-        sampled_at=new.sampled_at,
-        power_w=new.power_w if new.power_w is not None else previous.power_w,
-        energy_wh=new.energy_wh if new.energy_wh is not None else previous.energy_wh,
-        current_a={**previous.current_a, **new.current_a},
-        voltage_v={**previous.voltage_v, **new.voltage_v},
-        current_offered_a=new.current_offered_a if new.current_offered_a is not None else previous.current_offered_a,
-    )
+    energy = new.energy_wh if new.energy_wh is not None else previous.energy_wh
+    energy_only = new.power_w is None and not new.current_a and not new.voltage_v and new.current_offered_a is None
+    if not energy_only:
+        return replace(new, energy_wh=energy)
+    return replace(previous, sampled_at=new.sampled_at, energy_wh=energy)

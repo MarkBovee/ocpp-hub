@@ -157,7 +157,7 @@ class ChargerSensor(OcppHubEntity, SensorEntity):
 RECENT_SESSIONS = 20
 
 
-# A whole number of watts, or None.
+# A whole number, or None.
 def _rounded(value: float | None) -> int | None:
     return round(value) if value is not None else None
 

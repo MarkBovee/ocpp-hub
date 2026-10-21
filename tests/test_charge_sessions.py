@@ -297,3 +297,25 @@ async def test_a_finished_charge_carries_its_own_statistics(start_hub) -> None:
     finished = hub.listener.finished[0]
     assert finished.average_power_w == 3900.0 and finished.max_power_w == 4000.0
     assert finished.max_current_a == {"L1": 5.95} and finished.offered_a == 6.0
+
+
+# Intent: a full reading replaces the phases, power and offered current of the one before it, so a phase that is no
+# longer reported does not keep its old value; only a reading with nothing but the energy register keeps the rest.
+# Why: after a three-phase car, a one-phase car would otherwise show the old currents of L2 and L3 while it
+# charges on L1.
+async def test_a_full_reading_replaces_phases_that_are_no_longer_reported(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    # A MeterValues payload with the given phase currents and, optionally, the power.
+    def reading(stamp: str, phases: dict[str, str], power: int | None) -> dict[str, Any]:
+        values = [{"measurand": "Current.Import", "phase": p, "value": v, "unit": "A"} for p, v in phases.items()]
+        if power is not None:
+            values.append({"measurand": "Power.Active.Import", "value": str(power), "unit": "W"})
+        return {"connectorId": 1, "meterValue": [{"timestamp": f"2026-10-21T{stamp}Z", "sampledValue": values}]}
+
+    await charger.call("MeterValues", reading("08:00:00", {"L1": "16", "L2": "16", "L3": "16"}, 11000))
+    await charger.call("MeterValues", reading("08:10:00", {"L1": "6"}, None))
+
+    meter = hub.listener.latest.meter
+    assert meter.current_a == {"L1": 6.0} and meter.power_w is None
