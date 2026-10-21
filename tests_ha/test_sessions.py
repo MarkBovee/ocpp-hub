@@ -13,8 +13,7 @@ from custom_components.ocpp_hub.const import DOMAIN
 from custom_components.ocpp_hub.core.model import ChargeSession
 from tests_ha.conftest import state_of, wait_for
 
-SESSION_ENERGY = "sensor.ocpp_hub_test0001_session_energy"
-SESSION_STARTED = "sensor.ocpp_hub_test0001_session_started"
+CURRENT_SESSION = "sensor.ocpp_hub_test0001_current_session"
 LAST_SESSION = "sensor.ocpp_hub_test0001_last_session"
 
 
@@ -68,14 +67,16 @@ async def test_a_charge_shows_live_and_then_in_the_history(
         {"connectorId": 1, "idTag": "TAG1", "meterStart": 1000, "timestamp": "2026-10-21T08:00:00Z"},
     )
     await charger.call("MeterValues", _meter("2026-10-21T08:30:00Z", 3000, 6000))
-    await wait_for(hass, lambda: state_of(hass, SESSION_ENERGY) == "2.0", "live energy not shown")
-    assert state_of(hass, SESSION_STARTED) == "2026-10-21T08:00:00+00:00"
+    await wait_for(hass, lambda: state_of(hass, CURRENT_SESSION) == "2.0", "live energy not shown")
+    running = hass.states.get(CURRENT_SESSION).attributes
+    assert running["started_at"] == "2026-10-21T08:00:00+00:00" and running["id_tag"] == "TAG1"
+    assert running["duration_s"] == 1800 and running["max_power_w"] == 6000.0
 
     await charger.call(
         "StopTransaction",
         {"transactionId": started[2]["transactionId"], "meterStop": 5000, "timestamp": "2026-10-21T09:00:00Z"},
     )
-    await wait_for(hass, lambda: state_of(hass, SESSION_ENERGY) == "unknown", "live energy not cleared")
+    await wait_for(hass, lambda: state_of(hass, CURRENT_SESSION) == "unknown", "live energy not cleared")
     await wait_for(hass, lambda: state_of(hass, LAST_SESSION) == "2026-10-21T09:00:00+00:00", "no last session")
 
     attributes = hass.states.get(LAST_SESSION).attributes

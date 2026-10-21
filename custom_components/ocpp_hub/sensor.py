@@ -19,7 +19,6 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
-    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -29,7 +28,7 @@ from homeassistant.helpers.typing import StateType
 from .const import MIRROR_POLL_INTERVAL, session_signal
 from .core import readings
 from .core.mirror_model import MirrorStatus
-from .core.model import ChargerSnapshot
+from .core.model import ChargerSnapshot, ChargeSession
 from .entity import OcppHubEntity, async_add_charger_entities
 from .runtime import HubRuntime, OcppHubConfigEntry
 
@@ -107,42 +106,6 @@ CHARGER_SENSORS: tuple[ChargerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=readings.current_offered_a,
     ),
-    ChargerSensorDescription(
-        key="session_energy",
-        translation_key="session_energy",
-        device_class=SensorDeviceClass.ENERGY,
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        suggested_display_precision=2,
-        value_fn=readings.session_energy_kwh,
-    ),
-    ChargerSensorDescription(
-        key="session_started",
-        translation_key="session_started",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        value_fn=readings.session_started,
-    ),
-    ChargerSensorDescription(
-        key="session_duration",
-        translation_key="session_duration",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        suggested_unit_of_measurement=UnitOfTime.MINUTES,
-        suggested_display_precision=0,
-        value_fn=readings.session_duration_s,
-    ),
-    ChargerSensorDescription(
-        key="model",
-        translation_key="model",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda snapshot: snapshot.info.model,
-    ),
-    ChargerSensorDescription(
-        key="firmware",
-        translation_key="firmware",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda snapshot: snapshot.info.firmware,
-    ),
 )
 
 
@@ -157,11 +120,11 @@ async def async_setup_entry(
         entities: list[OcppHubEntity] = [
             ChargerSensor(runtime, entry.entry_id, cp_id, description) for description in CHARGER_SENSORS
         ]
+        entities.append(CurrentSessionSensor(runtime, entry.entry_id, cp_id))
         entities.append(LastSessionSensor(runtime, entry.entry_id, cp_id))
         if runtime.mirror is not None:
             entities += [
                 MirrorStatusSensor(runtime, entry.entry_id, cp_id),
-                MirrorQueueSensor(runtime, entry.entry_id, cp_id),
             ]
         return entities
 
@@ -192,6 +155,75 @@ class ChargerSensor(OcppHubEntity, SensorEntity):
 # How many finished charges the last-session sensor lists in its attributes. The full history is in the store and the
 # get_sessions service; an attribute must stay small, because Home Assistant limits its size.
 RECENT_SESSIONS = 20
+
+
+# A whole number, or None.
+def _rounded(value: float | None) -> int | None:
+    return round(value) if value is not None else None
+
+
+# The numbers of a finished charge as attributes: the same keys for the latest charge and for the list of recent ones.
+def _session_attributes(session: ChargeSession) -> dict[str, Any]:
+    return {
+        "started_at": session.started_at.isoformat(),
+        "ended_at": session.ended_at.isoformat(),
+        "energy_kwh": round(session.energy_wh / 1000, 3) if session.energy_wh is not None else None,
+        "duration_s": int(session.duration_s),
+        "max_power_w": session.max_power_w,
+        "average_power_w": _rounded(session.average_power_w),
+        "max_current_a": dict(session.max_current_a),
+        "offered_a": session.offered_a,
+        "limit_a": session.limit_a,
+        "id_tag": session.id_tag,
+        "stop_reason": session.stop_reason,
+    }
+
+
+class CurrentSessionSensor(OcppHubEntity, SensorEntity):
+    """The charge that is running: its energy so far, with everything else about it as attributes.
+
+    There is one sensor and no loose ones for start, duration or peak: all session information belongs to the session.
+    """
+
+    _attr_translation_key = "current_session"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 2
+
+    # Build the sensor for one charger.
+    def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
+        super().__init__(runtime, entry_id, cp_id, "sensor", "current_session")
+
+    @property
+    def native_value(self) -> float | None:
+        """The energy delivered since the charge started, or None while no charge runs."""
+        return readings.session_energy_kwh(self._snapshot)
+
+    @property
+    def available(self) -> bool:
+        """A charger that is gone has no running charge."""
+        return self._snapshot.connected
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """The running charge in plain numbers; empty while none runs."""
+        charge = self._snapshot.connectors.get(readings.PRIMARY_CONNECTOR)
+        if charge is None or charge.transaction_id is None:
+            return {}
+        return {
+            "transaction_id": charge.transaction_id,
+            "started_at": charge.started_at.isoformat() if charge.started_at else None,
+            "duration_s": readings.session_duration_s(self._snapshot),
+            "id_tag": charge.id_tag,
+            "max_power_w": charge.stats.max_power_w,
+            "average_power_w": round(charge.stats.average_power_w)
+            if charge.stats.average_power_w is not None
+            else None,
+            "max_current_a": dict(charge.stats.max_current_a),
+            "offered_a": charge.stats.offered_a,
+            "limit_a": self._snapshot.charge_limit_a,
+        }
 
 
 class LastSessionSensor(OcppHubEntity, SensorEntity):
@@ -235,27 +267,8 @@ class LastSessionSensor(OcppHubEntity, SensorEntity):
         recent = self._runtime.sessions.newest_first(self._cp_id, RECENT_SESSIONS)
         attributes: dict[str, Any] = {"session_count": self._runtime.sessions.count(self._cp_id)}
         if recent:
-            latest = recent[0]
-            attributes |= {
-                "energy_kwh": round(latest.energy_wh / 1000, 3) if latest.energy_wh is not None else None,
-                "duration_s": int(latest.duration_s),
-                "started_at": latest.started_at.isoformat(),
-                "id_tag": latest.id_tag,
-                "max_power_w": latest.max_power_w,
-                "stop_reason": latest.stop_reason,
-            }
-        attributes["recent_sessions"] = [
-            {
-                "started_at": s.started_at.isoformat(),
-                "ended_at": s.ended_at.isoformat(),
-                "energy_kwh": round(s.energy_wh / 1000, 3) if s.energy_wh is not None else None,
-                "duration_s": int(s.duration_s),
-                "max_power_w": s.max_power_w,
-                "id_tag": s.id_tag,
-                "stop_reason": s.stop_reason,
-            }
-            for s in recent
-        ]
+            attributes |= _session_attributes(recent[0])
+        attributes["recent_sessions"] = [_session_attributes(s) for s in recent]
         return attributes
 
 
@@ -300,23 +313,7 @@ class MirrorStatusSensor(MirrorEntity, SensorEntity):
         return {
             "last_error": status.last_error,
             "last_success": status.last_success.isoformat() if status.last_success else None,
+            "queue_length": status.queue_length,
             "dropped_frames": status.dropped_frames,
             "unmapped_transactions": status.unmapped_transactions,
         }
-
-
-class MirrorQueueSensor(MirrorEntity, SensorEntity):
-    """How many frames wait for the vendor backend."""
-
-    _attr_translation_key = "mirror_queue"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    # Build the sensor for one charger.
-    def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
-        super().__init__(runtime, entry_id, cp_id, "sensor", "mirror_queue")
-
-    @property
-    def native_value(self) -> int:
-        """The number of frames waiting; zero when there is no link."""
-        status = self._status()
-        return status.queue_length if status is not None else 0

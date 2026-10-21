@@ -31,7 +31,6 @@ STATUS = "sensor.ocpp_hub_test0001_status"
 POWER = "sensor.ocpp_hub_test0001_power"
 CONNECTED = "binary_sensor.ocpp_hub_test0001_connected"
 MIRROR_STATUS = "sensor.ocpp_hub_test0001_mirror_status"
-MIRROR_QUEUE = "sensor.ocpp_hub_test0001_mirror_queue"
 
 METER_VALUES = {
     "connectorId": 1,
@@ -71,8 +70,10 @@ async def test_entities_follow_the_charger(
     assert float(state_of(hass, "sensor.ocpp_hub_test0001_energy") or 0) == 12.345
     assert [state_of(hass, f"sensor.ocpp_hub_test0001_current_l{n}") for n in (1, 2, 3)] == ["10.5", "10.4", "10.6"]
     assert state_of(hass, "sensor.ocpp_hub_test0001_current_offered") == "16.0"
-    assert state_of(hass, "sensor.ocpp_hub_test0001_model") == "NEO_22T_A"
-    assert state_of(hass, "sensor.ocpp_hub_test0001_firmware") == "s8100000001131&2.0.5_134"
+    assert (
+        state_of(hass, "sensor.ocpp_hub_test0001_model") is None
+        and state_of(hass, "sensor.ocpp_hub_test0001_firmware") is None
+    )
     device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, "TEST0001"), entry.entry_id)
     assert device is not None and device.manufacturer == "RAEDIAN" and device.model == "NEO_22T_A"
 
@@ -161,11 +162,11 @@ async def test_mirror_forwards_and_reports(
         await charger.boot()
         await wait_for(hass, lambda: "BootNotification" in vendor.actions(), "the boot did not reach the vendor")
 
-        # Refresh the mirror sensors and tell whether they show a connected link with an empty queue.
+        # Refresh the mirror sensor and tell whether it shows a connected link with an empty queue.
         async def mirror_connected() -> bool:
             await async_update_entity(hass, MIRROR_STATUS)
-            await async_update_entity(hass, MIRROR_QUEUE)
-            return state_of(hass, MIRROR_STATUS) == "connected" and state_of(hass, MIRROR_QUEUE) == "0"
+            status = hass.states.get(MIRROR_STATUS)
+            return status is not None and status.state == "connected" and status.attributes["queue_length"] == 0
 
         for _ in range(100):
             if await mirror_connected():
@@ -248,3 +249,25 @@ async def test_connect_notification_shows_charger_strings_as_plain_text(
     assert notification["title"] == "Charger connected"
     assert "`![x](http://example.invalid/p.png)`" in notification["message"]
     assert "`NEO_{0} x`" in notification["message"] and "ocpp1.6" in notification["message"]
+
+
+# Intent: entities that were dropped in a later version are removed from the entity registry when the entry sets up,
+# while the entities that still exist are left alone.
+# Why: Home Assistant keeps the registry entry of a vanished entity for ever as an "unavailable" entity that nothing
+# updates, which is exactly the clutter the cleanup is meant to remove.
+async def test_retired_entities_are_removed_from_the_registry(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]]
+) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_PORT: 0})
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for key in ("model", "firmware", "mirror_queue", "session_energy", "session_started", "session_duration"):
+        registry.async_get_or_create("sensor", DOMAIN, f"TEST0001:{key}", config_entry=entry)
+    kept = registry.async_get_or_create("sensor", DOMAIN, "TEST0001:power", config_entry=entry)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    left = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    assert left == {kept.unique_id}
+    await hass.config_entries.async_unload(entry.entry_id)

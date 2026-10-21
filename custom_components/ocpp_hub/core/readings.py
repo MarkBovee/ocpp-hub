@@ -32,8 +32,18 @@ def connector_status(snapshot: ChargerSnapshot) -> str | None:
     return CONNECTOR_STATUS_KEYS.get(connector.status) if connector is not None else None
 
 
-# The latest power drawn, in watts.
+# Whether the socket is known not to deliver power: its status is known and it is not charging.
+# Nothing flows then, so power and current are zero, which is a fact and not a missing value. Before the first status
+# nothing is known, and the reading shows what the meter said.
+def _not_delivering(snapshot: ChargerSnapshot) -> bool:
+    status = connector_status(snapshot)
+    return status is not None and status != "charging"
+
+
+# The latest power drawn, in watts; zero while the socket delivers nothing.
 def power_w(snapshot: ChargerSnapshot) -> float | None:
+    if _not_delivering(snapshot):
+        return 0.0
     return snapshot.meter.power_w if snapshot.meter is not None else None
 
 
@@ -44,9 +54,16 @@ def energy_kwh(snapshot: ChargerSnapshot) -> float | None:
     return round(snapshot.meter.energy_wh / 1000, 3)
 
 
-# The latest current of one phase (L1, L2 or L3), in amperes.
+# The latest current of one phase (L1, L2 or L3), in amperes; zero while the socket delivers nothing, and zero for a
+# phase the meter leaves out while it reports others (a car that charges on one phase).
 def phase_current_a(snapshot: ChargerSnapshot, phase: str) -> float | None:
-    return snapshot.meter.current_a.get(phase) if snapshot.meter is not None else None
+    if _not_delivering(snapshot):
+        return 0.0
+    if snapshot.meter is None:
+        return None
+    if phase in snapshot.meter.current_a:
+        return snapshot.meter.current_a[phase]
+    return 0.0 if snapshot.meter.current_a else None
 
 
 # The latest voltage of one phase (L1, L2 or L3), in volts.

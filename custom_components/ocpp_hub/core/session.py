@@ -27,8 +27,8 @@ from .frames import (
     build_call_result,
     parse_frame,
 )
-from .metering import parse_meter_values, parse_timestamp
-from .model import ChargerInfo, ChargerSnapshot, ChargeSession, ConnectorState
+from .metering import merge_samples, parse_meter_values, parse_timestamp
+from .model import ChargerInfo, ChargerSnapshot, ChargeSession, ChargeStats, ConnectorState
 from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
@@ -382,10 +382,9 @@ class ChargerSession:
             return {}
         connectors = dict(self._snapshot.connectors)
         running = self._running_connector(payload)
-        if running is not None and sample.power_w is not None:
-            peak = max(sample.power_w, running.max_power_w or 0.0)
-            connectors[running.connector_id] = replace(running, max_power_w=peak)
-        self._update(meter=sample, connectors=connectors)
+        if running is not None:
+            connectors[running.connector_id] = replace(running, stats=running.stats.add(sample))
+        self._update(meter=merge_samples(self._snapshot.meter, sample), connectors=connectors)
         return {}
 
     # The connector a meter reading belongs to: the one it names, or the only one with a charge running.
@@ -420,7 +419,7 @@ class ChargerSession:
                 id_tag=_text(payload.get("idTag")),
                 meter_start_wh=_finite(payload.get("meterStart")),
                 started_at=started_at,
-                max_power_w=None,
+                stats=ChargeStats(),
             )
         )
         return {"transactionId": transaction_id, "idTagInfo": {"status": "Accepted"}}
@@ -440,7 +439,7 @@ class ChargerSession:
                         id_tag=None,
                         meter_start_wh=None,
                         started_at=None,
-                        max_power_w=None,
+                        stats=ChargeStats(),
                     )
                 )
                 self._listener.on_session_finished(finished)
@@ -472,7 +471,11 @@ class ChargerSession:
             meter_start_wh=start_reading,
             meter_stop_wh=meter_stop,
             energy_wh=energy,
-            max_power_w=connector.max_power_w,
+            max_power_w=connector.stats.max_power_w,
+            average_power_w=connector.stats.average_power_w,
+            max_current_a=connector.stats.max_current_a,
+            offered_a=connector.stats.offered_a,
+            limit_a=self._snapshot.charge_limit_a,
             stop_reason=_text(payload.get("reason")),
         )
 

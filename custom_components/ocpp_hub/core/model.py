@@ -34,6 +34,38 @@ class MeterSample:
 
 
 @dataclass(frozen=True, slots=True)
+class ChargeStats:
+    """What the meter readings of a charge that is running add up to. A new charge starts from an empty one."""
+
+    samples: int = 0
+    power_sum_w: float = 0.0
+    max_power_w: float | None = None
+    max_current_a: Mapping[str, float] = field(default_factory=dict)
+    offered_a: float | None = None
+
+    @property
+    def average_power_w(self) -> float | None:
+        """The mean of the power readings, or None when there were none."""
+        return self.power_sum_w / self.samples if self.samples else None
+
+    # Add one reading. Only the values the reading carries count: a reading with just the energy register changes
+    # nothing here, so a clock-aligned energy-only reading cannot weigh the average down.
+    def add(self, sample: MeterSample) -> ChargeStats:
+        power = sample.power_w
+        currents = dict(self.max_current_a)
+        for phase, amps in sample.current_a.items():
+            currents[phase] = max(amps, currents.get(phase, amps))
+        offered = sample.current_offered_a
+        return ChargeStats(
+            samples=self.samples + (1 if power is not None else 0),
+            power_sum_w=self.power_sum_w + (power or 0.0),
+            max_power_w=self.max_power_w if power is None else max(power, self.max_power_w or power),
+            max_current_a=currents,
+            offered_a=self.offered_a if offered is None else max(offered, self.offered_a or offered),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectorState:
     """Status of one connector, plus the transaction running on it."""
 
@@ -45,7 +77,7 @@ class ConnectorState:
     id_tag: str | None = None
     meter_start_wh: float | None = None
     started_at: datetime | None = None
-    max_power_w: float | None = None
+    stats: ChargeStats = field(default_factory=ChargeStats)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +113,11 @@ class ChargeSession:
     meter_stop_wh: float | None = None
     energy_wh: float | None = None
     max_power_w: float | None = None
+    average_power_w: float | None = None
+    max_current_a: Mapping[str, float] = field(default_factory=dict)
+    offered_a: float | None = None
+    # The limit the hub had set on the charger when the charge ended, if any.
+    limit_a: float | None = None
     stop_reason: str | None = None
 
     @property
@@ -101,6 +138,10 @@ class ChargeSession:
             "meter_stop_wh": self.meter_stop_wh,
             "energy_wh": self.energy_wh,
             "max_power_w": self.max_power_w,
+            "average_power_w": self.average_power_w,
+            "max_current_a": dict(self.max_current_a),
+            "offered_a": self.offered_a,
+            "limit_a": self.limit_a,
             "stop_reason": self.stop_reason,
         }
 
@@ -118,5 +159,9 @@ class ChargeSession:
             meter_stop_wh=data.get("meter_stop_wh"),
             energy_wh=data.get("energy_wh"),
             max_power_w=data.get("max_power_w"),
+            average_power_w=data.get("average_power_w"),
+            max_current_a=dict(data.get("max_current_a") or {}),
+            offered_a=data.get("offered_a"),
+            limit_a=data.get("limit_a"),
             stop_reason=data.get("stop_reason"),
         )
