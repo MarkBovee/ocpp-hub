@@ -81,3 +81,29 @@ def remote_stop_transaction(transaction_id: int) -> dict[str, Any]:
 # The charger combines all its profiles, so the answer is what really applies, whoever set it.
 def get_composite_schedule(connector_id: int, duration_s: int = 3600) -> dict[str, Any]:
     return {"connectorId": connector_id, "duration": duration_s, "chargingRateUnit": "A"}
+
+
+# Build SetChargingProfile with a daily schedule: a recurring profile that starts at `anchor` and repeats every 24
+# hours, with one limit in amperes from each start offset (in seconds after the anchor) until the next one.
+def set_charging_schedule(
+    connector_id: int,
+    purpose: str,
+    periods: list[tuple[int, float]],
+    profile_id: int,
+    anchor_iso: str,
+    stack_level: int = 0,
+) -> dict[str, Any]:
+    profile: dict[str, Any] = {
+        "chargingProfileId": profile_id,
+        "stackLevel": stack_level,
+        "chargingProfilePurpose": purpose,
+        "chargingProfileKind": "Recurring",
+        "recurrencyKind": "Daily",
+        "chargingSchedule": {
+            "duration": 86400,
+            "startSchedule": anchor_iso,
+            "chargingRateUnit": "A",
+            "chargingSchedulePeriod": [{"startPeriod": start, "limit": limit} for start, limit in periods],
+        },
+    }
+    return {"connectorId": connector_id, "csChargingProfiles": profile}

@@ -186,6 +186,12 @@
     },
     "control_unreachable": {
       "message": "The charger did not answer: {detail}."
+    },
+    "control_invalid_schedule": {
+      "message": "Refused: {detail}."
+    },
+    "charger_not_chosen": {
+      "message": "More than one charger (or none) is known; name the charger with charger_id."
     }
   },
   "services": {
@@ -200,6 +206,20 @@
         "limit": {
           "name": "Limit",
           "description": "Return at most this many of the newest sessions."
+        }
+      }
+    },
+    "set_schedule": {
+      "name": "Set charge schedule",
+      "description": "Installs a daily schedule of charge limits on the charger, repeated every day from midnight local time. It replaces the single charge limit. Every limit stays under your current ceiling, and a limit under 6 A pauses the charger. Changes of summer and winter time shift it by an hour until you set it again.",
+      "fields": {
+        "charger_id": {
+          "name": "Charger ID",
+          "description": "The charger to write to. Leave empty when there is only one."
+        },
+        "periods": {
+          "name": "Periods",
+          "description": "A list of periods, each with a time of the day (HH:MM) and the limit in amperes that applies from then on. The first period starts at 00:00 and the times must increase."
         }
       }
     }

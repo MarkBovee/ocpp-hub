@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ocpp_hub.const import CONF_MAX_CURRENT
+from custom_components.ocpp_hub.const import CONF_MAX_CURRENT, DOMAIN
 from tests_ha.conftest import state_of, wait_for
 
 LIMIT = "number.ocpp_hub_test0001_charge_limit"
@@ -159,3 +159,33 @@ async def test_damaged_limit_storage_does_not_stop_the_setup(
     entry = await setup_hub()
 
     assert entry.state.name == "LOADED"
+
+
+# Intent: the set_schedule service sends a daily recurring profile anchored at midnight local time with the times as
+# offsets, refuses a period above the ceiling before anything is sent, and the limit-in-effect sensor lists the
+# schedule the charger reports with absolute times.
+# Why: this is how a schedule reaches the charger from an automation or a script; a bad period must stop at the door,
+# and what the dashboard shows must be what the charger says it will do.
+async def test_the_schedule_service_and_the_reported_schedule(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger = await _booted(hass, setup_hub, connect_charger)
+    in_effect = "sensor.ocpp_hub_test0001_limit_in_effect"
+    charger.composite_limit = 6.0
+    charger.composite_periods = [(0, 6.0), (25200, 16.0)]
+    periods = [{"time": "00:00", "limit": 6}, {"time": "07:00", "limit": 16}]
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN, "set_schedule", {"periods": [{"time": "00:00", "limit": 17}]}, blocking=True
+        )
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(charger.next_hub_call(), 0.2)
+    request = await _call_and_answer(hass, charger, DOMAIN, "set_schedule", {"periods": periods})
+    await wait_for(hass, lambda: hass.states.get(in_effect).attributes["schedule"], "schedule not shown")
+
+    profile = request[3]["csChargingProfiles"]
+    assert profile["chargingProfileKind"] == "Recurring" and profile["recurrencyKind"] == "Daily"
+    assert [p["startPeriod"] for p in profile["chargingSchedule"]["chargingSchedulePeriod"]] == [0, 25200]
+    shown = hass.states.get(in_effect).attributes["schedule"]
+    assert [entry["limit_a"] for entry in shown] == [6.0, 16.0] and shown[0]["from"].startswith("2026-10-22T00:00")

@@ -12,3 +12,16 @@ get_sessions:
         number:
           min: 1
           mode: box
+
+set_schedule:
+  fields:
+    charger_id:
+      required: false
+      example: "CHARGER1"
+      selector:
+        text:
+    periods:
+      required: true
+      example: '[{"time": "00:00", "limit": 6}, {"time": "07:00", "limit": 16}]'
+      selector:
+        object:

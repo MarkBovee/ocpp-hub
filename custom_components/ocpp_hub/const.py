@@ -26,6 +26,8 @@ DEFAULT_MAX_CURRENT = 16
 
 # The service that returns the charge history.
 SERVICE_GET_SESSIONS = "get_sessions"
+# The service that installs a daily schedule of charge limits.
+SERVICE_SET_SCHEDULE = "set_schedule"
 
 # The logger of this package. Home Assistant often runs with warnings only, which would hide the connection and boot
 # lines this integration is judged by, so setup raises this one logger to INFO.

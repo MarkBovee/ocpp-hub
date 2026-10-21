@@ -28,6 +28,10 @@ class FakeCharger:
         # Answer GetCompositeSchedule by itself: with an error, or with this limit in amperes when it is set.
         self.answer_composite = True
         self.composite_limit: float | None = None
+        # For a request that looks a day ahead: the periods to answer with, as (offset in seconds, amperes).
+        self.composite_periods: list[tuple[int, float]] | None = None
+        # A charger that cannot answer a request for a whole day, only for the present moment.
+        self.refuse_long_composite = False
         self._results: dict[str, asyncio.Future[list[Any]]] = {}
         self._connection: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -91,6 +95,18 @@ class FakeCharger:
 
     # The answer to a GetCompositeSchedule: the limit that was set for it, or a CALLERROR as a charger without support.
     def _composite_reply(self, frame: list[Any]) -> list[Any]:
+        if frame[3].get("duration", 0) > 3600 and self.refuse_long_composite:
+            return [4, frame[1], "NotSupported", "", {}]
+        if frame[3].get("duration", 0) > 3600 and self.composite_periods is not None:
+            periods = [{"startPeriod": offset, "limit": limit} for offset, limit in self.composite_periods]
+            schedule = {"chargingRateUnit": "A", "chargingSchedulePeriod": periods}
+            body = {
+                "status": "Accepted",
+                "connectorId": 1,
+                "scheduleStart": "2026-10-22T00:00:00Z",
+                "chargingSchedule": schedule,
+            }
+            return [3, frame[1], body]
         if self.composite_limit is None:
             return [4, frame[1], "NotSupported", "", {}]
         schedule = {

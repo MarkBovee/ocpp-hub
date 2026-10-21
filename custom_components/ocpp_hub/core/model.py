@@ -108,6 +108,10 @@ class ChargerSnapshot:
     vendor_purpose: str | None = None
     # What the charger itself says is in effect right now, from GetCompositeSchedule; None when it cannot say.
     composite_limit_a: float | None = None
+    # The limits the charger says apply over the next 24 hours, as (seconds after schedule_start, amperes), and when
+    # that schedule starts. Empty when the charger did not say.
+    schedule_start: datetime | None = None
+    schedule_periods: tuple[tuple[int, float], ...] = ()
     # True while the hub's (or the vendor's) limit above comes from storage and the charger has not confirmed it: the
     # charger may have lost it (a reboot) or the vendor may have changed it while Home Assistant was down.
     hub_limit_restored: bool = False
