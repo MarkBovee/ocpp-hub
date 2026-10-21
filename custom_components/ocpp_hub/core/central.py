@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -112,6 +113,7 @@ class CentralSystem:
             vendor_a=snapshot.vendor_limit_a if vendor else None,
             vendor_profile_id=snapshot.vendor_profile_id if vendor else None,
             vendor_purpose=snapshot.vendor_purpose if vendor else None,
+            restored=snapshot.limits_restored,
         )
         if memory.empty:
             self._limits.pop(cp_id, None)
@@ -124,7 +126,7 @@ class CentralSystem:
 
     # Seed the limits from storage after a restart, so they show again before the charger has said anything.
     def restore_limits(self, limits: dict[str, LimitMemory]) -> None:
-        self._limits.update(limits)
+        self._limits.update({cp_id: replace(memory, restored=True) for cp_id, memory in limits.items()})
 
     # The limit that is remembered for a charger, for storage.
     def limit_memory(self, cp_id: str) -> LimitMemory:

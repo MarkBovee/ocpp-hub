@@ -66,4 +66,5 @@ class ChargeLimitNumber(OcppHubEntity, NumberEntity):
             "pauses_below_a": CHARGING_MIN_A,
             "profile_purpose": self._snapshot.limit_purpose,
             "vendor_limit_a": self._snapshot.vendor_limit_a,
+            "restored_unconfirmed": self._snapshot.limits_restored,
         }

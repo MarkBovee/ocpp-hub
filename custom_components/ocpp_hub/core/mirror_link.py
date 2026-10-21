@@ -376,7 +376,7 @@ class MirrorLink:
             frame[3],
             self._session.snapshot.configuration,
             self._can_trigger,
-            readings.effective_limit_a(self._session.snapshot),
+            readings.confirmed_limit_a(self._session.snapshot),
         )
         _LOGGER.info("Vendor backend sent %s for %s; answered without passing it to the charger", action, self.cp_id)
         _LOGGER.debug("Vendor command %s payload for %s: %s", action, self.cp_id, frame[3])

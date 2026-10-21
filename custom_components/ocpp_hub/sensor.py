@@ -231,6 +231,7 @@ class LimitInEffectSensor(OcppHubEntity, SensorEntity):
             "vendor_limit_a": snapshot.vendor_limit_a,
             "charger_reported_a": snapshot.composite_limit_a,
             "source": "charger" if snapshot.composite_limit_a is not None else "calculated",
+            "restored_unconfirmed": snapshot.limits_restored,
         }
 
 

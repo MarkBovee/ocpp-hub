@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+# The highest current per phase a stored or reported limit may have; no charger offers more.
+MAX_STORED_LIMIT_A = 80.0
 
 # Key used for a measurement that has no phase (the total, or a single-phase charger).
 PHASE_TOTAL = "total"
@@ -104,6 +108,9 @@ class ChargerSnapshot:
     vendor_purpose: str | None = None
     # What the charger itself says is in effect right now, from GetCompositeSchedule; None when it cannot say.
     composite_limit_a: float | None = None
+    # True while the limits above come from storage and the charger has not confirmed them: it may have lost them (a
+    # reboot) or the vendor may have changed them while Home Assistant was down.
+    limits_restored: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +190,8 @@ class LimitMemory:
     vendor_a: float | None = None
     vendor_profile_id: int | None = None
     vendor_purpose: str | None = None
+    # Set on limits that were read from storage and not yet confirmed by the charger; never stored itself.
+    restored: bool = False
 
     @property
     def empty(self) -> bool:
@@ -202,10 +211,20 @@ class LimitMemory:
     # Rebuild the memory from what to_dict wrote; a record with the wrong types raises, so the caller can skip it.
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> LimitMemory:
-        # A stored number as a float, or None when it is missing.
+        # A stored current as a float, or None when it is missing. A value that is not finite, negative or beyond any
+        # charger raises, so damaged storage never reaches the screen or the vendor.
         def number(key: str) -> float | None:
             value = data.get(key)
-            return float(value) if value is not None else None
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{key} is not a number")
+            if not math.isfinite(value) or not 0 <= value <= MAX_STORED_LIMIT_A:
+                raise ValueError(f"{key} is outside what a charger can have")
+            return float(value)
+
+        if not isinstance(data, Mapping):
+            raise TypeError("a limit record must be an object")
 
         profile_id = data.get("vendor_profile_id")
         return cls(

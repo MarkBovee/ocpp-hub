@@ -177,3 +177,14 @@ def effective_limit_a(snapshot: ChargerSnapshot) -> float | None:
         return snapshot.composite_limit_a
     known = [limit for limit in (snapshot.charge_limit_a, snapshot.vendor_limit_a) if limit is not None]
     return min(known) if known else None
+
+
+# The limit that is certain: what the charger reported, or the lowest limit the hub knows when it has written or
+# accepted it on this connection. A limit restored from storage and not yet confirmed is not certain, and is not told
+# to the vendor. None when nothing is certain.
+def confirmed_limit_a(snapshot: ChargerSnapshot) -> float | None:
+    if snapshot.composite_limit_a is not None:
+        return snapshot.composite_limit_a
+    if snapshot.limits_restored:
+        return None
+    return effective_limit_a(snapshot)

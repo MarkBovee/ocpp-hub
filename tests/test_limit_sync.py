@@ -154,3 +154,83 @@ async def test_a_vendor_charge_profile_limit_ends_with_the_charge(start_hub) -> 
     )
 
     assert hub.listener.latest.vendor_limit_a is None
+
+
+# Intent: the limit the charger reported is forgotten when a charge ends, and read again.
+# Why: a charge profile that paused the car ends with its charge; the old answer of the charger must not go on showing a
+# pause (or tell the vendor about one) until the next write.
+async def test_the_charger_reported_limit_does_not_outlive_the_charge(start_hub) -> None:
+    hub, charger, control = await _booted(start_hub)
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    charger.composite_limit = 0.0
+    task = asyncio.create_task(control.set_current_limit(0))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Rejected"})
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await task
+    await eventually(lambda: hub.listener.latest.composite_limit_a == 0.0, message="composite not read")
+    charger.composite_limit = None
+
+    await charger.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 1, "timestamp": "2026-10-21T09:00:00Z"},
+    )
+    await eventually(lambda: hub.listener.latest.connectors[1].transaction_id is None)
+
+    assert hub.listener.latest.composite_limit_a is None
+    assert readings.effective_limit_a(hub.listener.latest) is None
+
+
+# Intent: a limit restored from storage is shown as unconfirmed, is dropped when the charger says something else is in
+# effect, is kept when the charger confirms it, and is not told to the vendor while it is unconfirmed.
+# Why: after a restart the charger may have lost the limit (a reboot) or the vendor may have changed it; showing the
+# stored pause as the truth would hide that the charger charges at full current, and telling the vendor so would
+# repeat the mistake.
+async def test_a_restored_limit_is_checked_against_the_charger(start_hub) -> None:
+    memory = {"TEST0001": LimitMemory(hub_a=0.0, hub_purpose="ChargePointMaxProfile")}
+
+    # A hub with the stored limit restored and a booted charger that answers the composite schedule with this limit.
+    async def connect(composite: float | None) -> Any:
+        hub = await start_hub()
+        hub.central.restore_limits(dict(memory))
+        charger = await hub.charger()
+        charger.composite_limit = composite
+        await charger.boot()
+        return hub
+
+    unconfirmed = await connect(None)
+    shown = unconfirmed.listener.latest
+    answer = await unconfirmed.central.session("TEST0001").refresh_effective_limit()
+    still = unconfirmed.listener.latest
+    contradicted = await connect(32.0)
+    await contradicted.central.session("TEST0001").refresh_effective_limit()
+    confirmed = await connect(0.0)
+    await confirmed.central.session("TEST0001").refresh_effective_limit()
+
+    assert answer is None and shown.limits_restored and still.limits_restored and still.charge_limit_a == 0.0
+    assert readings.confirmed_limit_a(still) is None
+    assert contradicted.listener.latest.charge_limit_a is None and not contradicted.listener.latest.limits_restored
+    assert contradicted.listener.latest.composite_limit_a == 32.0
+    assert confirmed.listener.latest.charge_limit_a == 0.0 and not confirmed.listener.latest.limits_restored
+
+
+# Intent: stored limits that are damaged, not finite, negative or beyond any charger are refused when read back.
+# Why: the storage file can be edited or damaged, and a number from it must never reach the screen or the vendor
+# unchecked.
+def test_damaged_stored_limits_are_refused() -> None:
+    for record in (
+        {"hub_a": float("inf")},
+        {"hub_a": -3},
+        {"hub_a": 500},
+        {"vendor_a": "ten"},
+        {"hub_a": 6.0, "vendor_profile_id": "x"},
+        "not a record",
+    ):
+        try:
+            LimitMemory.from_dict(record)  # type: ignore[arg-type]
+        except KeyError, TypeError, ValueError, AttributeError:
+            continue
+        raise AssertionError(f"{record!r} must be refused")
