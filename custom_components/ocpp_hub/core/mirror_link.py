@@ -15,7 +15,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.typing import Subprotocol
 
-from .control import ControlPolicy
+from .control import ControlPolicy, plain_text
 from .frames import (
     ERROR_FORMATION_VIOLATION,
     ERROR_INTERNAL,
@@ -73,6 +73,9 @@ _WEBSOCKET_LOGGER = logging.getLogger(f"{__name__}.websocket")
 _WEBSOCKET_LOGGER.addFilter(_RedactAuthorization())
 
 # The error codes of the charger that are passed on to the vendor as they are; any other becomes an internal error.
+# The most vendor commands that may wait for the charger at once; the rest are refused, so a flood cannot hold up the
+# owner's own writes, which queue on the same connection.
+MAX_FORWARDS = 4
 _RELAYED_ERRORS = frozenset({ERROR_NOT_SUPPORTED, ERROR_NOT_IMPLEMENTED, ERROR_FORMATION_VIOLATION, ERROR_INTERNAL})
 
 
@@ -389,15 +392,21 @@ class MirrorLink:
     async def _forward(
         self, connection: ClientConnection, unique_id: str, action: str, payload: dict[str, Any]
     ) -> None:
+        if len(self._forwards) > MAX_FORWARDS:
+            _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
+            await self._send_to_vendor(connection, build_call_result(unique_id, {"status": "Rejected"}))
+            return
         plan = plan_forward(action, payload, self._policy, self._transactions)
         if not isinstance(plan, Forward):
-            _LOGGER.warning("[forward] Vendor %s for %s refused: %s", action, self.cp_id, plan.reason)
+            _LOGGER.warning("[forward] Vendor %s for %s refused: %s", action, self.cp_id, plain_text(plan.reason))
             await self._send_to_vendor(connection, build_call_result(unique_id, plan.answer))
             return
         try:
             answer = await self._session.call(plan.action, plan.payload)
         except CallRejectedError as error:
-            _LOGGER.info("[forward] Vendor %s for %s: the charger answered %s", action, self.cp_id, error.code)
+            _LOGGER.info(
+                "[forward] Vendor %s for %s: the charger answered %s", action, self.cp_id, plain_text(error.code, 40)
+            )
             code = error.code if error.code in _RELAYED_ERRORS else ERROR_INTERNAL
             refusal = build_call_error(unique_id, code, "the charger refused the request")
             await self._send_to_vendor(connection, refusal)

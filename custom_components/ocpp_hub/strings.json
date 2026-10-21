@@ -33,7 +33,7 @@
           "vendor_user": "Only if the backend asks for a user name. Set a password with it.",
           "vendor_password": "Never shown again. Leave empty to keep the stored password; it is only kept while the host of the address stays the same.",
           "max_current": "The highest current per phase the hub may ask the charger for. Keep it below the installer's own limit. A value under 6 A in the charge limit pauses the charger.",
-          "vendor_commands": "What happens to commands from the manufacturer's backend. Passing them on lets it start and stop charges, change settings and set charging profiles on the charger, within the current ceiling below; Reset, firmware and diagnostics stay refused."
+          "vendor_commands": "What happens to commands from the manufacturer's backend. Passing them on lets it start and stop charges, change a few settings, set charging profiles, unlock the cable and set the connector inoperative, within the current ceiling below. Reset, firmware, diagnostics and DataTransfer stay refused."
         }
       }
     },

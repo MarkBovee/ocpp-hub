@@ -24,7 +24,7 @@ STATION_CONNECTOR = 0
 
 
 # Text from a charger, made safe to put in a log line or a message: printable, one line, and short.
-def _plain(value: str, limit: int = 120) -> str:
+def plain_text(value: str, limit: int = 120) -> str:
     return " ".join("".join(c for c in value if c.isprintable() or c.isspace()).split())[:limit]
 
 
@@ -33,9 +33,9 @@ class ControlError(Exception):
 
     # Keep the stable code and a human detail.
     def __init__(self, code: str, detail: str = "") -> None:
-        super().__init__(f"{code}: {_plain(detail)}" if detail else code)
+        super().__init__(f"{code}: {plain_text(detail)}" if detail else code)
         self.code = code
-        self.detail = _plain(detail)
+        self.detail = plain_text(detail)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,9 +153,9 @@ class ChargerControl:
         try:
             answer = await self._session.call(action, payload)
         except CallRejectedError as error:
-            return _plain(error.code, 40)
+            return plain_text(error.code, 40)
         except CallError as error:
             # A timeout does not say the charger ignored the request: it may have applied the limit and answered late.
             raise ControlError("unreachable", str(error)) from error
         status = answer.get("status")
-        return _plain(status, 40) if isinstance(status, str) else "NoStatus"
+        return plain_text(status, 40) if isinstance(status, str) else "NoStatus"

@@ -25,6 +25,23 @@ PROFILE = {
 }
 
 
+# A charging profile with one flat period; the unit, the limit, the phases and the number of periods are what varies.
+def _profile(unit: str | None, limit: float, phases: int | None = None, periods: int = 1) -> dict[str, Any]:
+    period: dict[str, Any] = {"startPeriod": 0, "limit": limit}
+    if phases is not None:
+        period["numberPhases"] = phases
+    schedule: dict[str, Any] = {"chargingSchedulePeriod": [dict(period, startPeriod=n * 60) for n in range(periods)]}
+    if unit is not None:
+        schedule["chargingRateUnit"] = unit
+    return {
+        "chargingProfileId": 5,
+        "stackLevel": 0,
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": schedule,
+    }
+
+
 # A booted charger behind a mirror that forwards, with the first frames already at the vendor.
 async def _forwarding_rig(start_rig: Any) -> tuple[Any, Any]:
     rig = await start_rig(commands="forward")
@@ -49,12 +66,15 @@ async def test_a_forwarded_command_reaches_the_charger_and_its_answer_returns(st
     assert answer[0] == 3 and answer[2] == {"status": "Accepted"}
 
 
-# Intent: Reset, UpdateFirmware and GetDiagnostics stay refused with forwarding on, and nothing reaches the charger.
-# Why: the owner kept these out of the first phase; a firmware or reset command from outside is the most damaging one.
+# Intent: Reset, UpdateFirmware, GetDiagnostics and DataTransfer stay refused with forwarding on, and nothing reaches
+# the charger.
+# Why: the owner kept reset and firmware out of the first phase, and a DataTransfer can carry the same thing under a
+# vendor-specific name, which is not known for the NEO.
 @pytest.mark.parametrize(
     ("action", "payload", "expected"),
     [
         ("Reset", {"type": "Hard"}, {"status": "Rejected"}),
+        ("DataTransfer", {"vendorId": "v", "messageId": "reboot"}, {"status": "Rejected"}),
         ("UpdateFirmware", {"location": "https://vendor.example/fw", "retrieveDate": "t"}, {}),
         ("GetDiagnostics", {"location": "https://vendor.example/logs"}, {}),
     ],
@@ -167,8 +187,33 @@ async def test_a_charger_error_is_passed_back_to_the_vendor(start_rig) -> None:
         ("ChangeConfiguration", {"key": "AuthorizationKey", "value": "x"}, False),
         ("ChangeConfiguration", {"key": "MeterValuesSampledData", "value": "Voltage"}, False),
         ("ChangeConfiguration", {"key": "LightIntensity", "value": "50"}, True),
+        ("ChangeConfiguration", {"key": "SomeVendorCurrentKey", "value": "63"}, False),
         ("RemoteStartTransaction", {"idTag": "x"}, True),
-        ("DataTransfer", {"vendorId": "v"}, True),
+        ("RemoteStartTransaction", {"idTag": "x", "chargingProfile": _profile(unit="A", limit=32)}, False),
+        ("RemoteStartTransaction", {"idTag": "x", "chargingProfile": _profile(unit="A", limit=10)}, True),
+        (
+            "SetChargingProfile",
+            {"connectorId": 1, "csChargingProfiles": _profile(unit="W", limit=11040, phases=1)},
+            False,
+        ),
+        (
+            "SetChargingProfile",
+            {"connectorId": 1, "csChargingProfiles": _profile(unit="W", limit=11040, phases=3)},
+            True,
+        ),
+        ("SetChargingProfile", {"connectorId": 1, "csChargingProfiles": _profile(unit=None, limit=10)}, False),
+        ("SetChargingProfile", {"connectorId": 1, "csChargingProfiles": _profile(unit="kW", limit=10)}, False),
+        (
+            "SetChargingProfile",
+            {"connectorId": 1, "csChargingProfiles": _profile(unit="A", limit=10, periods=100)},
+            False,
+        ),
+        ("ClearChargingProfile", {"id": "7001"}, False),
+        ("ChangeConfiguration", {"key": "ChargingScheduleAllowedChargingRateUnit", "value": "W"}, False),
+        ("ChangeConfiguration", {"key": "LightIntensity ", "value": "50"}, False),
+        ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": 30}, False),
+        ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": "30"}, True),
+        ("DataTransfer", {"vendorId": "v"}, False),
     ],
 )
 def test_the_forwarding_rules(action: str, payload: dict[str, Any], allowed: bool) -> None:
