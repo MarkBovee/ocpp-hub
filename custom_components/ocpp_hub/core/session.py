@@ -397,7 +397,9 @@ class ChargerSession:
         connector = self._connector(connector_id)
         if connector.transaction_id is not None:
             interrupted = self._finished_session(
-                connector, connector.transaction_id, {"timestamp": started_at.isoformat(), "reason": "Other"}
+                connector,
+                connector.transaction_id,
+                {"timestamp": started_at.isoformat(), "reason": "Other", "meterStop": payload.get("meterStart")},
             )
             self._listener.on_session_finished(interrupted)
         transaction_id = self._next_transaction_id()

@@ -98,7 +98,10 @@ class CentralSystem:
             _LOGGER.info("Charger %s reconnected; closing its previous connection", cp_id)
             await previous.close()
         # A charge that was running when the charger's last connection ended goes on with the new one.
-        resume = _running_connectors(previous.snapshot) if previous is not None else self._open_charges.pop(cp_id, {})
+        # The entry is always taken out: the old connection may have stored one while it closed, and a copy left behind
+        # would bring a finished charge back as a ghost.
+        remembered = self._open_charges.pop(cp_id, {})
+        resume = (_running_connectors(previous.snapshot) if previous is not None else None) or remembered
         session = ChargerSession(
             cp_id,
             protocol,
@@ -119,6 +122,8 @@ class CentralSystem:
                 running = _running_connectors(session.snapshot)
                 if running:
                     self._open_charges[cp_id] = running
+                else:
+                    self._open_charges.pop(cp_id, None)
             _LOGGER.info("Charger %s disconnected", cp_id)
 
 

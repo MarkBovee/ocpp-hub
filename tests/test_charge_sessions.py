@@ -199,3 +199,29 @@ async def test_transaction_ids_do_not_restart_at_one(start_hub) -> None:
     )
 
     assert started[2]["transactionId"] > 1_000_000_000
+
+
+# Intent: when a charger reconnects before the hub noticed the old link dying, the charge goes on with the new
+# connection and is gone for good once it stopped; a later connection does not bring it back.
+# Why: the old connection's cleanup used to leave a copy of the running charge behind, which came back as a ghost and
+# was then recorded a second time when the next charge started.
+async def test_no_ghost_charge_after_a_reconnect_over_a_live_link(start_hub) -> None:
+    hub = await start_hub()
+    first = await hub.charger()
+    started = await first.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG1", "meterStart": 1000, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    second = await hub.charger()
+    await second.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 2000, "timestamp": "2026-10-21T08:30:00Z"},
+    )
+    await second.close()
+    await second.wait_closed()
+    third = await hub.charger()
+    await third.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG2", "meterStart": 2000, "timestamp": "2026-10-21T09:00:00Z"}
+    )
+
+    assert len(hub.listener.finished) == 1
+    assert hub.listener.finished[0].transaction_id == started[2]["transactionId"]
