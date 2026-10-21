@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Control: `number` charge limit (0 to a ceiling you set, default 16 A; under 6 A pauses) and `switch` to start and stop a charge. The ceiling is an option; every write is logged with `[write]`.
+
 - Charge sessions: the running charge is shown live (`_session_energy`, `_session_started`, `_session_duration`), every finished charge is kept without limit in Home Assistant's storage, `_last_session` lists the newest ones, and the service `ocpp_hub.get_sessions` returns the whole history. A ready dashboard is in `docs/dashboard.md`.
 
 ## 0.1.0

@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from .control import ChargerControl, ControlPolicy
 from .frames import Frame
 from .model import ChargerSnapshot, ChargeSession, ConnectorState
 from .session import ChargerSession, SessionListener, SessionSettings
@@ -33,7 +34,9 @@ class CentralSystem:
         listeners: Sequence[SessionListener],
         settings: SessionSettings | None = None,
         clock: Callable[[], datetime] | None = None,
+        policy: ControlPolicy | None = None,
     ) -> None:
+        self._policy = policy or ControlPolicy()
         self._listeners = list(listeners)
         self._settings = settings
         self._clock = clock
@@ -71,6 +74,16 @@ class CentralSystem:
     # Commands to a charger go through its session.
     def session(self, cp_id: str) -> ChargerSession | None:
         return self._sessions.get(cp_id)
+
+    @property
+    def policy(self) -> ControlPolicy:
+        """What the owner allows the hub to write to a charger."""
+        return self._policy
+
+    # The writes to a connected charger, under the owner's ceiling; None when the charger is not connected.
+    def control(self, cp_id: str) -> ChargerControl | None:
+        session = self._sessions.get(cp_id)
+        return ChargerControl(session, self._policy) if session is not None else None
 
     # The snapshots of all connected chargers.
     # Used for diagnostics and by tests.

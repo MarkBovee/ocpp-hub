@@ -14,15 +14,18 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     BIND_HOST,
     BUILD_FILE,
+    CONF_MAX_CURRENT,
     CONF_PORT,
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
     CONF_VENDOR_USER,
+    DEFAULT_MAX_CURRENT,
     DOMAIN,
     PACKAGE_LOGGER,
     SERVICE_GET_SESSIONS,
 )
 from .core.central import CentralSystem
+from .core.control import ControlPolicy
 from .core.mirror import VendorMirror
 from .core.mirror_model import MirrorSettings, MirrorSettingsError
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
@@ -30,7 +33,7 @@ from .session_store import SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 
 # The commit the running code comes from, as written by the deploy tool; "unknown" for a copy that was not deployed.
@@ -64,6 +67,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+# The ceiling for writes from the entry options. A value that cannot be right falls back to the default instead of
+# widening what is allowed; the error says so.
+def _control_policy(entry: OcppHubConfigEntry) -> ControlPolicy:
+    wanted = entry.options.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT)
+    try:
+        return ControlPolicy(max_current_a=float(wanted))
+    except TypeError, ValueError:
+        _LOGGER.error("The current ceiling %r is not valid; using %s A", wanted, DEFAULT_MAX_CURRENT)
+        return ControlPolicy(max_current_a=float(DEFAULT_MAX_CURRENT))
+
+
 # The mirror settings from the entry options, or None when no vendor URL is set.
 # Options are validated by the options flow, so an invalid combination here means the entry was edited by hand;
 # the error says what is wrong and the hub runs without a mirror instead of not at all.
@@ -94,7 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     mirror = VendorMirror(settings) if settings is not None else None
     if mirror is not None:
         await mirror.start()
-    central = CentralSystem([listener, *([mirror] if mirror is not None else [])])
+    central = CentralSystem([listener, *([mirror] if mirror is not None else [])], policy=_control_policy(entry))
     port = entry.data[CONF_PORT]
     try:
         await central.start(BIND_HOST, port)

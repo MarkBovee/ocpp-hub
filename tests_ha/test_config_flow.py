@@ -11,6 +11,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ocpp_hub.const import (
+    CONF_MAX_CURRENT,
     CONF_PORT,
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
@@ -67,6 +68,7 @@ async def test_options_are_stored(hass: HomeAssistant) -> None:
         CONF_VENDOR_URL: "wss://vendor.example:8443/ocpp",
         CONF_VENDOR_USER: "mirror",
         CONF_VENDOR_PASSWORD: "s3cret",
+        CONF_MAX_CURRENT: 16,
     }
 
 
@@ -113,7 +115,7 @@ async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {**stored, CONF_VENDOR_URL: "wss://old.example/v2/ocpp"}
+    assert entry.options == {**stored, CONF_VENDOR_URL: "wss://old.example/v2/ocpp", CONF_MAX_CURRENT: 16}
     assert suggested == {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror"}
 
 
@@ -141,7 +143,7 @@ async def test_empty_url_switches_the_mirror_off(hass: HomeAssistant) -> None:
 
     result = await _submit(hass, entry, {CONF_VENDOR_URL: "", CONF_VENDOR_USER: "mirror"})
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY and entry.options == {}
+    assert result["type"] is FlowResultType.CREATE_ENTRY and entry.options == {CONF_MAX_CURRENT: 16}
 
 
 # Intent: removing the user name drops the stored password too, so the pair stays whole.
@@ -154,4 +156,4 @@ async def test_clearing_the_user_drops_the_stored_password(hass: HomeAssistant) 
     result = await _submit(hass, entry, {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: ""})
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_VENDOR_URL: "wss://old.example/ocpp"}
+    assert entry.options == {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_MAX_CURRENT: 16}

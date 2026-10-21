@@ -18,6 +18,10 @@ CONF_VENDOR_URL = "vendor_url"
 CONF_VENDOR_USER = "vendor_user"
 CONF_VENDOR_PASSWORD = "vendor_password"
 
+# The highest current per phase the hub may ask a charger for. The owner sets it below the installer's own limit.
+CONF_MAX_CURRENT = "max_current"
+DEFAULT_MAX_CURRENT = 16
+
 # The service that returns the charge history.
 SERVICE_GET_SESSIONS = "get_sessions"
 

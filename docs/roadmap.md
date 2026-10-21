@@ -20,12 +20,12 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 ## In progress
 
 - [~] Charge sessions: live session sensors, an unbounded stored history, `_last_session` with the newest charges, the service `ocpp_hub.get_sessions`, and a ready dashboard (`docs/dashboard.md`). Tested with a fake charger; not yet seen with a real charge.
+- [~] Control: a charge limit `number` (0 to the ceiling, default 16 A, under 6 A pauses) and a start/stop `switch`, through one guarded write path in `core/control.py`. Tested with a fake charger; whether the NEO obeys a charging profile is unproven.
 
 ## Open
 
 - [ ] Watch a real charge, read-only: what the NEO sends for `StartTransaction`, `MeterValues` (interval, measurands), `StopTransaction` (reason) and whether the status change reaches the vendor. The session code assumes standard OCPP 1.6 until this is seen.
 - [ ] Measure a full restart of Home Assistant (a reload is measured: 14 seconds).
-- [ ] Control entities (`number` for the charge limit, `switch` for start and stop). Writing to the charger needs the owner's approval for each kind of write and a stated current ceiling. Whether the NEO executes `SetChargingProfile` is unproven.
 - [ ] Setting to let selected vendor commands through to the charger (today they are all refused). Needs a decision by the owner first.
 - [ ] Persist the mirror queue and a charge that is running across a restart of Home Assistant (today both are lost; documented in the README).
 - [ ] Optional username default for the vendor: use the charger's serial when only a password is given. Build only if the vendor answers HTTP 401.

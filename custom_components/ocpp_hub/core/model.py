@@ -61,6 +61,10 @@ class ChargerSnapshot:
     connectors: Mapping[int, ConnectorState] = field(default_factory=dict)
     meter: MeterSample | None = None
     last_seen: datetime | None = None
+    # The current limit the hub last set and the profile purpose the charger accepted for it; None when the hub has set
+    # none on this connection. The charger is not asked what it holds, so this is what the hub knows it wrote.
+    charge_limit_a: float | None = None
+    limit_purpose: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

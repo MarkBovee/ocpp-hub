@@ -15,7 +15,14 @@ A charger talks to one OCPP backend at a time. Point it at Home Assistant and th
 - Keeps the history of every charge (energy, peak power, duration, tag, stop reason) without limit, and shows the running charge live. See [docs/dashboard.md](docs/dashboard.md) for a ready dashboard.
 - Stays local: no cloud service of ours is involved.
 
-Still to come: a charge limit and start/stop through `number` and `switch` entities. Writing to a charger needs the owner's explicit approval for each kind of write, so it is not built until that is given.
+## Control
+
+Two entities write to the charger, both only when you use them:
+
+- `number.ocpp_hub_<charger id>_charge_limit` sets the current per phase, from 0 to the ceiling in the options (default 16 A, never above what you set there). A value under 6 A is sent as 0 A, because a car does not charge under 6 A: it pauses the charger. The hub tries a station-wide `ChargePointMaxProfile` first, then `TxProfile` while a charge runs, then `TxDefaultProfile`, and remembers which one the charger accepted. The number shows what the charger last accepted on this connection; the charger is not asked what it holds, so after a reconnect it shows nothing until you set the limit again.
+- `switch.ocpp_hub_<charger id>_charging` starts a charge (`RemoteStartTransaction`, tag `OCPPHUB`) or stops the running one (`RemoteStopTransaction`). A start works only with a car connected; the charger refuses otherwise and Home Assistant says so.
+
+Whether a charger really obeys a charging profile is proven only by watching a charge; the NEO has not been seen doing it yet. Every write is logged with the prefix `[write]`.
 
 ## What happens when a charger connects
 

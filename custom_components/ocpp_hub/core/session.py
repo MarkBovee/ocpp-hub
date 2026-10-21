@@ -258,6 +258,11 @@ class ChargerSession:
         result = frame[2]
         return result if isinstance(result, dict) else {}
 
+    # Remember the limit the charger accepted and the purpose it accepted it as.
+    # The snapshot is what Home Assistant shows, and the purpose spares the next write the purposes that were refused.
+    def record_limit(self, amps: float | None, purpose: str | None) -> None:
+        self._update(charge_limit_a=amps, limit_purpose=purpose)
+
     # Send one frame to the charger and tell the listener about it.
     # Every frame the hub sends passes here, so listeners such as the mirror see the hub's answers too.
     async def _send(self, text: str) -> None:

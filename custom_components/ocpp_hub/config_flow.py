@@ -9,9 +9,25 @@ from urllib.parse import urlsplit
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
-from .const import CONF_PORT, CONF_VENDOR_PASSWORD, CONF_VENDOR_URL, CONF_VENDOR_USER, DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_MAX_CURRENT,
+    CONF_PORT,
+    CONF_VENDOR_PASSWORD,
+    CONF_VENDOR_URL,
+    CONF_VENDOR_USER,
+    DEFAULT_MAX_CURRENT,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 from .core.mirror_model import MirrorSettings, MirrorSettingsError
 
 # The form field each settings error belongs to; the others are shown on the form as a whole.
@@ -86,7 +102,9 @@ class OcppHubOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                return self.async_create_entry(data=vendor_options(user_input, self.config_entry.options))
+                ceiling = int(user_input.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT))
+                options = vendor_options(user_input, self.config_entry.options)
+                return self.async_create_entry(data={**options, CONF_MAX_CURRENT: ceiling})
             except MirrorSettingsError as error:
                 errors[ERROR_FIELDS.get(error.code, "base")] = error.code
         shown = user_input if user_input is not None else self.config_entry.options
@@ -95,6 +113,12 @@ class OcppHubOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_VENDOR_URL, description={"suggested_value": shown.get(CONF_VENDOR_URL, "")}): str,
                 vol.Optional(CONF_VENDOR_USER, description={"suggested_value": shown.get(CONF_VENDOR_USER, "")}): str,
                 vol.Optional(CONF_VENDOR_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                vol.Optional(
+                    CONF_MAX_CURRENT,
+                    default=int(shown.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT)),
+                ): NumberSelector(
+                    NumberSelectorConfig(min=6, max=80, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="A")
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
