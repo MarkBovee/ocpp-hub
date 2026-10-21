@@ -31,6 +31,7 @@ A charger gets a device once it has sent its `BootNotification`. The entity ids 
 Open the integration's options and fill in:
 
 - **Backend address:** the vendor's OCPP address, starting with `ws://` or `wss://`, with host, port and path but without the charger's serial number (the hub adds that, as the charger itself does) and without credentials in it. Leave it empty to switch the mirror off.
+- **Raedian (NEO and other Raedian chargers):** use `wss://cloud-protocol.raedian.com:9043/ocpp/` and leave user name and password empty. The port is 9043; the installer app hides the address of its default profile, and port 443 does not answer. Verified on a NEO 22 kW: the vendor accepts the connection and its app shows the charger as online.
 - **User name and password:** only if the backend asks for them. They are sent as HTTP Basic authentication; the password field never shows what is stored, and an empty field keeps it.
 
 Per charger there are two diagnostic sensors, `_mirror_status` (idle, connecting or connected, with the last error and the counters as attributes) and `_mirror_queue` (frames waiting).
