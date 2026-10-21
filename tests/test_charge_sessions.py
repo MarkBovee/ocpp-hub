@@ -109,3 +109,93 @@ def test_a_session_round_trips_through_its_dictionary() -> None:
         pass
     else:
         raise AssertionError("a damaged record must raise")
+
+
+# Intent: a charge that is running while the charger reconnects is still reported when it stops, with the data from
+# its start, and the live values survive the reconnect.
+# Why: a wifi drop in the middle of a charge is common; losing the charge from the history would break the promise that
+# every charge is kept.
+async def test_a_charge_survives_a_reconnect_of_the_charger(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG1", "meterStart": 1000, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    await charger.call("MeterValues", _meter("2026-10-21T08:10:00Z", 2000, 5000))
+    await charger.close()
+    await charger.wait_closed()
+
+    again = await hub.charger()
+    resumed = hub.listener.latest.connectors[1]
+    await again.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 3000, "timestamp": "2026-10-21T08:30:00Z"},
+    )
+
+    assert resumed.transaction_id == started[2]["transactionId"] and resumed.max_power_w == 5000.0
+    assert len(hub.listener.finished) == 1
+    assert hub.listener.finished[0].energy_wh == 2000.0 and hub.listener.finished[0].id_tag == "TAG1"
+    assert hub.listener.finished[0].started_at == datetime(2026, 10, 21, 8, 0, tzinfo=UTC)
+
+
+# Intent: a StartTransaction on a connector that still has a running charge closes the old charge first, ended at the
+# new start and with the last meter reading, and the new charge runs on.
+# Why: a charger that lost its stop (power cut, a firmware that starts again) must not make the first charge vanish.
+async def test_a_second_start_closes_the_charge_that_was_still_running(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    first = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG1", "meterStart": 1000, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    await charger.call("MeterValues", _meter("2026-10-21T08:10:00Z", 2500, 6000))
+    second = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG2", "meterStart": 2500, "timestamp": "2026-10-21T09:00:00Z"}
+    )
+
+    assert len(hub.listener.finished) == 1
+    closed = hub.listener.finished[0]
+    assert closed.transaction_id == first[2]["transactionId"] and closed.energy_wh == 1500.0
+    assert closed.ended_at == datetime(2026, 10, 21, 9, 0, tzinfo=UTC) and closed.stop_reason == "Other"
+    assert hub.listener.latest.connectors[1].transaction_id == second[2]["transactionId"]
+
+
+# Intent: hostile numbers and texts in the start and stop do not break the answer or reach the history unbounded: an
+# impossible meter value becomes "unknown", an idTag that is not a string is dropped, and long texts are cut.
+# Why: the charger port has no authentication; an overflowing number raised inside the handler and left the charge
+# open, and a megabyte tag would have bloated a history that is never truncated.
+async def test_hostile_values_are_contained(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    started = await charger.call(
+        "StartTransaction",
+        {"connectorId": 1, "idTag": {"not": "a string"}, "meterStart": 10**400, "timestamp": "2026-10-21T08:00:00Z"},
+    )
+    stopped = await charger.call(
+        "StopTransaction",
+        {
+            "transactionId": started[2]["transactionId"],
+            "meterStop": float("inf"),
+            "timestamp": "2026-10-21T09:00:00Z",
+            "reason": "X" * 5000,
+        },
+    )
+
+    assert started[0] == 3 and stopped[0] == 3
+    assert len(hub.listener.finished) == 1
+    finished = hub.listener.finished[0]
+    assert finished.id_tag is None and finished.energy_wh is None and finished.meter_stop_wh is None
+    assert finished.stop_reason is not None and len(finished.stop_reason) == 64
+
+
+# Intent: transaction ids keep growing across a restart of the central system.
+# Why: the history stores ids and a charger may stop an id from before the restart; a counter that starts at 1 again
+# would repeat ids and could match a new charge with an old stop.
+async def test_transaction_ids_do_not_restart_at_one(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG1", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+
+    assert started[2]["transactionId"] > 1_000_000_000

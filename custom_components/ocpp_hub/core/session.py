@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -124,6 +125,29 @@ def _int_field(payload: dict[str, Any], name: str) -> int:
     return value
 
 
+# The longest text from a charger that is kept: an idTag is 20 characters in OCPP, a stop reason is a short word.
+MAX_TEXT = 64
+
+
+# A text the charger sent, cut to MAX_TEXT; None when it is not a string or is empty.
+# The port has no authentication and the history is never truncated, so no charger-supplied text is kept unbounded.
+def _text(value: object) -> str | None:
+    return value[:MAX_TEXT] if isinstance(value, str) and value else None
+
+
+# A number the charger sent as a finite float; None when it is missing, not a number, too large or not finite.
+# float() raises OverflowError on a huge integer, and JSON allows Infinity and NaN, so none of that may reach the
+# energy arithmetic or a sensor state.
+def _finite(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 class ChargerSession:
     """The hub's side of one charger connection."""
 
@@ -137,6 +161,7 @@ class ChargerSession:
         next_transaction_id: Callable[[], int],
         settings: SessionSettings | None = None,
         clock: Callable[[], datetime] | None = None,
+        resume: Mapping[int, ConnectorState] | None = None,
     ) -> None:
         self._connection = connection
         self._listener = listener
@@ -150,7 +175,11 @@ class ChargerSession:
         self._setup_task: asyncio.Task[None] | None = None
         # Metering settings the charger rejected on this connection; they are not offered again.
         self._rejected_keys: set[str] = set()
-        self._snapshot = ChargerSnapshot(cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock())
+        # Charges that were running when the charger's previous connection ended, so a stop after a reconnect still
+        # finds its start.
+        self._snapshot = ChargerSnapshot(
+            cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock(), connectors=dict(resume or {})
+        )
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
             "Heartbeat": self._heartbeat,
@@ -359,18 +388,26 @@ class ChargerSession:
         return running[0] if len(running) == 1 else None
 
     # Hand out a transaction id and remember which connector it runs on.
+    # A start on a connector that still has a running charge means the charger lost that charge's stop (a power cut,
+    # a firmware that starts again); the old charge is closed first, at the new start, so it is not lost.
     # Every tag is accepted: this is a private charger on a trusted network, and refusing one only strands the owner.
     def _start_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         connector_id = _int_field(payload, "connectorId")
-        meter_start = payload.get("meterStart")
+        started_at = parse_timestamp(payload.get("timestamp"), self._clock())
+        connector = self._connector(connector_id)
+        if connector.transaction_id is not None:
+            interrupted = self._finished_session(
+                connector, connector.transaction_id, {"timestamp": started_at.isoformat(), "reason": "Other"}
+            )
+            self._listener.on_session_finished(interrupted)
         transaction_id = self._next_transaction_id()
         self._update_connector(
             replace(
-                self._connector(connector_id),
+                connector,
                 transaction_id=transaction_id,
-                id_tag=str(payload.get("idTag", "")),
-                meter_start_wh=float(meter_start) if isinstance(meter_start, (int, float)) else None,
-                started_at=parse_timestamp(payload.get("timestamp"), self._clock()),
+                id_tag=_text(payload.get("idTag")),
+                meter_start_wh=_finite(payload.get("meterStart")),
+                started_at=started_at,
                 max_power_w=None,
             )
         )
@@ -403,27 +440,25 @@ class ChargerSession:
         self, connector: ConnectorState, transaction_id: int, payload: dict[str, Any]
     ) -> ChargeSession:
         ended_at = parse_timestamp(payload.get("timestamp"), self._clock())
-        stop = payload.get("meterStop")
-        meter_stop = float(stop) if isinstance(stop, (int, float)) and not isinstance(stop, bool) else None
+        meter_stop = _finite(payload.get("meterStop"))
         last = self._snapshot.meter.energy_wh if self._snapshot.meter is not None else None
         end_reading = meter_stop if meter_stop is not None else last
         start_reading = connector.meter_start_wh
         energy = (
             max(end_reading - start_reading, 0.0) if start_reading is not None and end_reading is not None else None
         )
-        reason = payload.get("reason")
         return ChargeSession(
             cp_id=self.cp_id,
             connector_id=connector.connector_id,
             transaction_id=transaction_id,
-            id_tag=connector.id_tag or None,
+            id_tag=connector.id_tag,
             started_at=connector.started_at or ended_at,
             ended_at=ended_at,
             meter_start_wh=start_reading,
             meter_stop_wh=meter_stop,
             energy_wh=energy,
             max_power_w=connector.max_power_w,
-            stop_reason=reason if isinstance(reason, str) else None,
+            stop_reason=_text(payload.get("reason")),
         )
 
     # Accept an authorisation request.

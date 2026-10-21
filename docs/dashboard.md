@@ -27,7 +27,7 @@ cards:
       | Started | kWh | Minutes | Peak kW | Stopped by |
       |---|---|---|---|---|
       {% for s in state_attr('sensor.ocpp_hub_charger1_last_session', 'recent_sessions') or [] -%}
-      | {{ as_timestamp(s.started_at) | timestamp_custom('%d-%m %H:%M') }} | {{ s.energy_kwh }} | {{ s.duration_s // 60 }} | {{ ((s.max_power_w or 0) / 1000) | round(1) }} | {{ s.stop_reason or '-' }} |
+      | {{ as_timestamp(s.started_at) | timestamp_custom('%d-%m %H:%M') }} | {{ s.energy_kwh }} | {{ s.duration_s // 60 }} | {{ ((s.max_power_w or 0) / 1000) | round(1) }} | {{ (s.stop_reason or '-') | replace('|', '/') | replace('\n', ' ') }} |
       {% endfor %}
 ```
 

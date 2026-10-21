@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from websockets.asyncio.server import Server, ServerConnection, serve
 
 from .frames import Frame
-from .model import ChargerSnapshot, ChargeSession
+from .model import ChargerSnapshot, ChargeSession, ConnectorState
 from .session import ChargerSession, SessionListener, SessionSettings
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +41,8 @@ class CentralSystem:
         self._sessions: dict[str, ChargerSession] = {}
         # Seeded from the clock so ids from before a restart cannot collide with ids a charger still holds offline.
         self._transaction_counter = int(time.time()) % 2**31
+        # The charges that were running when a charger's connection ended, until the charger comes back.
+        self._open_charges: dict[str, dict[int, ConnectorState]] = {}
 
     @property
     def port(self) -> int:
@@ -95,6 +97,8 @@ class CentralSystem:
             # The charger came back before the hub noticed the old link dying.
             _LOGGER.info("Charger %s reconnected; closing its previous connection", cp_id)
             await previous.close()
+        # A charge that was running when the charger's last connection ended goes on with the new one.
+        resume = _running_connectors(previous.snapshot) if previous is not None else self._open_charges.pop(cp_id, {})
         session = ChargerSession(
             cp_id,
             protocol,
@@ -103,6 +107,7 @@ class CentralSystem:
             self._next_transaction_id,
             self._settings,
             self._clock,
+            resume,
         )
         self._sessions[cp_id] = session
         _LOGGER.info("Charger %s connected (%s)", cp_id, protocol)
@@ -111,7 +116,15 @@ class CentralSystem:
         finally:
             if self._sessions.get(cp_id) is session:
                 del self._sessions[cp_id]
+                running = _running_connectors(session.snapshot)
+                if running:
+                    self._open_charges[cp_id] = running
             _LOGGER.info("Charger %s disconnected", cp_id)
+
+
+# The connectors of a snapshot that have a charge running.
+def _running_connectors(snapshot: ChargerSnapshot) -> dict[int, ConnectorState]:
+    return {number: c for number, c in snapshot.connectors.items() if c.transaction_id is not None}
 
 
 class _Fanout:

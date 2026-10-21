@@ -137,6 +137,8 @@ async def _stop_runtime(central: CentralSystem, mirror: VendorMirror | None) -> 
 async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
-        await entry.runtime_data.sessions.async_flush()
+        try:
+            await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
+        finally:
+            await entry.runtime_data.sessions.async_flush()
     return unloaded
