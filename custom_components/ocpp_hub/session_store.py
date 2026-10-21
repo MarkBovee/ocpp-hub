@@ -75,11 +75,12 @@ class LimitStore:
 
     # Read the saved limits. A record that cannot be read is skipped with a warning.
     async def async_load(self) -> dict[str, LimitMemory]:
-        stored = await self._store.async_load() or {}
-        for cp_id, record in (stored.get("limits") or {}).items():
+        stored = await self._store.async_load()
+        records = stored.get("limits") if isinstance(stored, dict) else None
+        for cp_id, record in records.items() if isinstance(records, dict) else []:
             try:
                 self._limits[cp_id] = LimitMemory.from_dict(record)
-            except KeyError, TypeError, ValueError:
+            except KeyError, TypeError, ValueError, AttributeError:
                 _LOGGER.warning("Skipping an unreadable limit record in storage")
         return dict(self._limits)
 

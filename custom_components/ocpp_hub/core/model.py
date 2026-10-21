@@ -108,9 +108,15 @@ class ChargerSnapshot:
     vendor_purpose: str | None = None
     # What the charger itself says is in effect right now, from GetCompositeSchedule; None when it cannot say.
     composite_limit_a: float | None = None
-    # True while the limits above come from storage and the charger has not confirmed them: it may have lost them (a
-    # reboot) or the vendor may have changed them while Home Assistant was down.
-    limits_restored: bool = False
+    # True while the hub's (or the vendor's) limit above comes from storage and the charger has not confirmed it: the
+    # charger may have lost it (a reboot) or the vendor may have changed it while Home Assistant was down.
+    hub_limit_restored: bool = False
+    vendor_limit_restored: bool = False
+
+    @property
+    def limits_restored(self) -> bool:
+        """True while any limit shown is only the stored one."""
+        return self.hub_limit_restored or self.vendor_limit_restored
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,8 +196,9 @@ class LimitMemory:
     vendor_a: float | None = None
     vendor_profile_id: int | None = None
     vendor_purpose: str | None = None
-    # Set on limits that were read from storage and not yet confirmed by the charger; never stored itself.
-    restored: bool = False
+    # Set on a side that was read from storage and not yet confirmed by the charger; never stored itself.
+    hub_restored: bool = False
+    vendor_restored: bool = False
 
     @property
     def empty(self) -> bool:

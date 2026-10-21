@@ -138,3 +138,24 @@ async def test_the_limit_is_saved_and_shown_again_after_a_reload(
     await wait_for(hass, lambda: state_of(hass, LIMIT) == "6.0", "limit not shown after the reload")
 
     assert source == "calculated" and state_of(hass, in_effect) == "6.0"
+
+
+# Intent: a damaged limits file (not an object, or records of the wrong shape) does not stop the integration from
+# loading; the damaged part is skipped and the rest is kept.
+# Why: the file lives in Home Assistant's storage and can be edited or damaged; a failure there used to make the entry
+# fail to load on every start until the file was removed by hand.
+@pytest.mark.parametrize(
+    "stored",
+    [["not", "an", "object"], {"limits": ["x"]}, {"limits": {"TEST0001": "x", "OTHER": {"hub_a": 6.0}}}],
+)
+async def test_damaged_limit_storage_does_not_stop_the_setup(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    setup_hub: Callable[..., Awaitable[MockConfigEntry]],
+    stored: object,
+) -> None:
+    hass_storage["ocpp_hub.limits"] = {"version": 1, "minor_version": 1, "key": "ocpp_hub.limits", "data": stored}
+
+    entry = await setup_hub()
+
+    assert entry.state.name == "LOADED"

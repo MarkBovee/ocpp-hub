@@ -210,7 +210,8 @@ class ChargerSession:
             vendor_limit_a=remembered.vendor_a,
             vendor_profile_id=remembered.vendor_profile_id,
             vendor_purpose=remembered.vendor_purpose,
-            limits_restored=remembered.restored,
+            hub_limit_restored=remembered.hub_restored,
+            vendor_limit_restored=remembered.vendor_restored,
         )
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
@@ -297,14 +298,9 @@ class ChargerSession:
     def record_limit(self, amps: float | None, purpose: str | None) -> None:
         if not self._snapshot.connected:
             return
-        # New knowledge replaces the old answer of the charger, which no longer describes what is in effect, and settles
-        # the restored limits: the other side's restored limit is dropped until the charger confirms it.
-        self._update(
-            charge_limit_a=amps,
-            limit_purpose=purpose,
-            composite_limit_a=None,
-            **self._drop_restored(keep_hub=True),
-        )
+        # New knowledge replaces the old answer of the charger, which no longer describes what is in effect. The hub's
+        # own limit is certain now; the vendor's restored one stays marked until the charger confirms it.
+        self._update(charge_limit_a=amps, limit_purpose=purpose, composite_limit_a=None, hub_limit_restored=False)
 
     # Remember the limit of a command from the vendor that the charger accepted, with the id and purpose of its profile.
     # A vendor limit of None means the vendor's profile is gone.
@@ -316,36 +312,26 @@ class ChargerSession:
             vendor_profile_id=profile_id,
             vendor_purpose=purpose,
             composite_limit_a=None,
-            **self._drop_restored(keep_hub=False),
+            vendor_limit_restored=False,
         )
 
-    # What to change in the snapshot when fresh knowledge arrives while the stored limits are still unconfirmed: the
-    # side that did not just write is forgotten (the charger will say what is in effect), and the flag is cleared.
-    def _drop_restored(self, keep_hub: bool) -> dict[str, Any]:
-        if not self._snapshot.limits_restored:
-            return {}
-        if keep_hub:
-            return {"vendor_limit_a": None, "vendor_profile_id": None, "vendor_purpose": None, "limits_restored": False}
-        return {"charge_limit_a": None, "limit_purpose": None, "limits_restored": False}
-
-    # Compare the limits restored from storage with what the charger says is in effect. When they agree the limits
-    # are confirmed; when they do not, the stored ones are gone from the charger and are dropped. A charger that said
-    # nothing confirms nothing, and they stay marked as restored.
+    # Compare the limits restored from storage with what the charger says is in effect. When the lowest limit known
+    # agrees with it, the restored limits are confirmed. When it does not, the restored sides are gone from the charger
+    # (or changed) and are dropped, while a side written on this connection stays. A charger that said nothing confirms
+    # nothing, and they stay marked as restored.
     def _reconcile_restored(self, composite: float | None) -> dict[str, Any]:
         snapshot = self._snapshot
         if not snapshot.limits_restored or composite is None:
             return {}
         known = [x for x in (snapshot.charge_limit_a, snapshot.vendor_limit_a) if x is not None]
         if known and abs(min(known) - composite) < 0.01:
-            return {"limits_restored": False}
-        return {
-            "charge_limit_a": None,
-            "limit_purpose": None,
-            "vendor_limit_a": None,
-            "vendor_profile_id": None,
-            "vendor_purpose": None,
-            "limits_restored": False,
-        }
+            return {"hub_limit_restored": False, "vendor_limit_restored": False}
+        changes: dict[str, Any] = {"hub_limit_restored": False, "vendor_limit_restored": False}
+        if snapshot.hub_limit_restored:
+            changes |= {"charge_limit_a": None, "limit_purpose": None}
+        if snapshot.vendor_limit_restored:
+            changes |= {"vendor_limit_a": None, "vendor_profile_id": None, "vendor_purpose": None}
+        return changes
 
     # Ask for the limit in effect in a task of its own, so a charger that answers slowly or never does not hold up the
     # write or the command that caused the question.

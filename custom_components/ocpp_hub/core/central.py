@@ -113,7 +113,8 @@ class CentralSystem:
             vendor_a=snapshot.vendor_limit_a if vendor else None,
             vendor_profile_id=snapshot.vendor_profile_id if vendor else None,
             vendor_purpose=snapshot.vendor_purpose if vendor else None,
-            restored=snapshot.limits_restored,
+            hub_restored=hub and snapshot.hub_limit_restored,
+            vendor_restored=vendor and snapshot.vendor_limit_restored,
         )
         if memory.empty:
             self._limits.pop(cp_id, None)
@@ -126,7 +127,14 @@ class CentralSystem:
 
     # Seed the limits from storage after a restart, so they show again before the charger has said anything.
     def restore_limits(self, limits: dict[str, LimitMemory]) -> None:
-        self._limits.update({cp_id: replace(memory, restored=True) for cp_id, memory in limits.items()})
+        self._limits.update(
+            {
+                cp_id: replace(
+                    memory, hub_restored=memory.hub_a is not None, vendor_restored=memory.vendor_a is not None
+                )
+                for cp_id, memory in limits.items()
+            }
+        )
 
     # The limit that is remembered for a charger, for storage.
     def limit_memory(self, cp_id: str) -> LimitMemory:

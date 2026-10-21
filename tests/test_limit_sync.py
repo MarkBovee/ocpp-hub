@@ -234,3 +234,26 @@ def test_damaged_stored_limits_are_refused() -> None:
         except KeyError, TypeError, ValueError, AttributeError:
             continue
         raise AssertionError(f"{record!r} must be refused")
+
+
+# Intent: an accepted command of the vendor does not drop a hub limit that was restored from storage; the charger's
+# answer then confirms both together.
+# Why: the vendor's write says nothing about the hub's own profile; dropping the stored pause would show "no limit"
+# while the charger is paused, and the drop would be saved, so the pause could never be checked again.
+async def test_a_vendor_write_does_not_drop_a_restored_hub_pause(start_rig) -> None:
+    rig = await start_rig(commands="forward")
+    rig.hub.central.restore_limits({"TEST0001": LimitMemory(hub_a=0.0, hub_purpose="ChargePointMaxProfile")})
+    charger = await rig.hub.charger()
+    charger.composite_limit = 0.0
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+
+    set_task = asyncio.create_task(rig.vendor.command("SetChargingProfile", PROFILE))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await set_task
+    await eventually(lambda: rig.hub.listener.latest.composite_limit_a == 0.0, message="composite not read")
+
+    shown = rig.hub.listener.latest
+    assert shown.charge_limit_a == 0.0 and shown.vendor_limit_a == 10.0 and not shown.limits_restored
+    assert rig.hub.central.limit_memory("TEST0001").hub_a in (None, 0.0)
