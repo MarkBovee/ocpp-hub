@@ -94,5 +94,19 @@
         "name": "Connected"
       }
     }
+  },
+  "exceptions": {
+    "charger_connected_title": {
+      "message": "Charger connected"
+    },
+    "charger_connected": {
+      "message": "A charger connected to OCPP Hub and booted.\n\n- Manufacturer: {vendor}\n- Type: {model}\n- Firmware: {firmware}\n- Serial number: {serial}\n- OCPP version: {protocol}\n- Mirror to the vendor backend: {mirror}"
+    },
+    "charger_connected_mirror_on": {
+      "message": "on"
+    },
+    "charger_connected_mirror_off": {
+      "message": "off"
+    }
   }
 }

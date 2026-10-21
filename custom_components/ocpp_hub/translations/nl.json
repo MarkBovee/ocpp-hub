@@ -94,5 +94,19 @@
         "name": "Verbonden"
       }
     }
+  },
+  "exceptions": {
+    "charger_connected_title": {
+      "message": "Laadpaal verbonden"
+    },
+    "charger_connected": {
+      "message": "Een laadpaal heeft verbinding gemaakt met OCPP Hub en zich aangemeld.\n\n- Fabrikant: {vendor}\n- Type: {model}\n- Firmware: {firmware}\n- Serienummer: {serial}\n- OCPP-versie: {protocol}\n- Mirror naar de backend van de leverancier: {mirror}"
+    },
+    "charger_connected_mirror_on": {
+      "message": "aan"
+    },
+    "charger_connected_mirror_off": {
+      "message": "uit"
+    }
   }
 }

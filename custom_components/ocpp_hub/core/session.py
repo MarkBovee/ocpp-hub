@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -28,6 +28,7 @@ from .frames import (
 )
 from .metering import parse_meter_values
 from .model import ChargerInfo, ChargerSnapshot, ConnectorState
+from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,6 +104,11 @@ class SessionSettings:
     setup_delay_s: float = 15.0
     # How long setup waits before each further try when the charger did not answer; no more tries after the last one.
     setup_retry_delays_s: tuple[float, ...] = (30.0, 60.0, 120.0, 300.0)
+    # A charger that reconnects after the hub restarted often sends no BootNotification and no StatusNotification,
+    # because the hub accepted it before. After this wait the hub asks for them itself.
+    boot_wait_s: float = 15.0
+    # How long the hub lets a requested BootNotification arrive before it judges what is still missing.
+    trigger_settle_s: float = 3.0
     meter_sample_interval_s: int = 15
     measurands: str = "Energy.Active.Import.Register,Power.Active.Import,Current.Import,Voltage,Current.Offered"
 
@@ -167,6 +173,7 @@ class ChargerSession:
     async def run(self) -> None:
         self._listener.on_connected(self)
         self._listener.on_snapshot(self._snapshot)
+        self._start_task(self._ask_for_introduction())
         try:
             async for message in self._connection:
                 await self._handle_message(message)
@@ -285,9 +292,7 @@ class ChargerSession:
             firmware=payload.get("firmwareVersion"),
         )
         self._update(info=info)
-        task = asyncio.get_running_loop().create_task(self._post_boot_setup())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._start_task(self._post_boot_setup())
         return {"status": "Accepted", "currentTime": self._now_iso(), "interval": self._settings.heartbeat_interval_s}
 
     # Answer a heartbeat with the hub's time.
@@ -360,6 +365,46 @@ class ChargerSession:
     # Firmware and diagnostics progress is for the vendor backend, which sees it through the mirror.
     def _acknowledge(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {}
+
+    # Run a coroutine in the background for as long as the connection lives.
+    # Tasks are cancelled when the connection ends, so none can outlive its session.
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.get_running_loop().create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    # Whether the charger has said who it is, in a BootNotification.
+    def _has_booted(self) -> bool:
+        info = self._snapshot.info
+        return info.vendor is not None or info.model is not None
+
+    # Ask the charger for the messages it did not send on its own after connecting: its boot, then its status.
+    # A charger that reconnects after the hub restarted usually skips both, so the hub would know neither the model nor
+    # the state. TriggerMessage is the standard way for a central system that joined late, and it only asks the charger
+    # to report; nothing on the charger changes. The charger ignores requests for a while after connecting, hence the
+    # wait, and an unanswered request is repeated like the setup is.
+    async def _ask_for_introduction(self) -> None:
+        delays = (self._settings.boot_wait_s, *self._settings.setup_retry_delays_s)
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+            try:
+                if not self._has_booted():
+                    await self.call("TriggerMessage", commands.trigger_message("BootNotification"))
+                    await asyncio.sleep(self._settings.trigger_settle_s)
+                if self._has_booted() and PRIMARY_CONNECTOR not in self._snapshot.connectors:
+                    await self.call("TriggerMessage", commands.trigger_message("StatusNotification", PRIMARY_CONNECTOR))
+            except CallError as error:
+                _LOGGER.warning(
+                    "Charger %s did not answer the request to introduce itself (try %s of %s): %s",
+                    self.cp_id,
+                    attempt,
+                    len(delays),
+                    error,
+                )
+                continue
+            if self._has_booted() and PRIMARY_CONNECTOR in self._snapshot.connectors:
+                _LOGGER.info("Charger %s introduced itself after being asked (try %s)", self.cp_id, attempt)
+                return
 
     # After a charger booted: read its configuration and make sure it sends the meter values the hub needs.
     # A charger that does not answer is asked again a few times; failures are logged, not raised, because the charger

@@ -60,8 +60,8 @@ def _mirror_settings(entry: OcppHubConfigEntry) -> MirrorSettings | None:
 async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> bool:
     logging.getLogger(PACKAGE_LOGGER).setLevel(logging.INFO)
     build = await hass.async_add_executor_job(_read_build_stamp)
-    listener = HubListener(hass, entry.entry_id, build)
     settings = _mirror_settings(entry)
+    listener = HubListener(hass, entry.entry_id, build, mirror_enabled=settings is not None)
     mirror = VendorMirror(settings) if settings is not None else None
     if mirror is not None:
         await mirror.start()

@@ -69,7 +69,8 @@ async def start_hub() -> AsyncIterator[Callable[..., Awaitable[Hub]]]:
     # Why: tests differ only in a few timings, so overrides keep each test short.
     async def _start(*extra_listeners: Any, **overrides: Any) -> Hub:
         listener = RecordingListener()
-        settings = SessionSettings(**{"setup_delay_s": 3600.0, "call_timeout_s": 1.0, **overrides})
+        defaults = {"setup_delay_s": 3600.0, "boot_wait_s": 3600.0, "call_timeout_s": 1.0}
+        settings = SessionSettings(**{**defaults, **overrides})
         central = CentralSystem([listener, *extra_listeners], settings)
         await central.start("127.0.0.1", 0)
         hub = Hub(central, listener)

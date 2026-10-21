@@ -29,6 +29,12 @@ BUILD_FILE = "BUILD"
 MIRROR_POLL_INTERVAL = timedelta(seconds=10)
 
 
+# The id of the notification that says a charger connected. One per charger, so a charger that reconnects updates its
+# own notification instead of adding a new one every time.
+def charger_notification_id(cp_id: str) -> str:
+    return f"{DOMAIN}_{cp_id}_connected"
+
+
 # The dispatcher signal that announces a charger whose entities should now exist (it has sent its BootNotification).
 # One signal per config entry, so a second entry could never receive another one's chargers.
 def new_charger_signal(entry_id: str) -> str:

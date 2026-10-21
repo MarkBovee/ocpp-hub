@@ -237,3 +237,34 @@ async def test_connection_without_identity_is_refused(start_hub) -> None:
     await charger.wait_closed()
 
     assert charger.close_code == 4001
+
+
+# Intent: a charger that reconnects without a BootNotification is asked for its boot, and then for its status.
+# Why: after a restart of the hub the Raedian NEO sends neither, and without them the hub knows no model and no state.
+async def test_charger_that_skips_its_boot_is_asked_to_introduce_itself(start_hub) -> None:
+    hub = await start_hub(boot_wait_s=0.0, trigger_settle_s=0.2, setup_retry_delays_s=(0.2,))
+    charger = await hub.charger()
+
+    boot_request = await charger.next_hub_call()
+    await charger.answer(boot_request, {"status": "Accepted"})
+    await charger.boot()
+    status_request = await charger.next_hub_call()
+    await charger.answer(status_request, {"status": "Accepted"})
+
+    assert boot_request[2] == "TriggerMessage" and boot_request[3] == {"requestedMessage": "BootNotification"}
+    assert status_request[2] == "TriggerMessage"
+    assert status_request[3] == {"requestedMessage": "StatusNotification", "connectorId": 1}
+    assert hub.listener.latest.info.model == "NEO_22T_A"
+
+
+# Intent: a charger that introduces itself on its own is not asked again.
+# Why: every extra request to a charger is a risk, and a normal charger sends its boot and status without being asked.
+async def test_charger_that_introduces_itself_is_not_asked(start_hub) -> None:
+    hub = await start_hub(boot_wait_s=0.3, trigger_settle_s=0.1, setup_retry_delays_s=(0.2,))
+    charger = await hub.charger()
+
+    await charger.boot()
+    await charger.call("StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"})
+
+    with pytest.raises(TimeoutError):
+        await charger.next_hub_call(timeout=0.8)
