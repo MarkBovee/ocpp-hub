@@ -55,16 +55,31 @@ def answer_vendor_call(
     payload: dict[str, Any],
     configuration: Mapping[str, str],
     can_trigger: Callable[[TriggerRequest], bool],
+    limit_a: float | None = None,
 ) -> VendorAnswer:
     match action:
         case "GetConfiguration":
             return VendorAnswer(build_call_result(unique_id, _configuration_answer(payload, configuration)))
         case "TriggerMessage":
             return _trigger_answer(unique_id, payload, can_trigger)
+        case "GetCompositeSchedule":
+            return VendorAnswer(build_call_result(unique_id, _composite_answer(payload, limit_a)))
         case _ if action in REFUSALS:
             return VendorAnswer(build_call_result(unique_id, dict(REFUSALS[action])))
         case _:
             return VendorAnswer(build_call_error(unique_id, ERROR_NOT_SUPPORTED, f"{action} is not supported"))
+
+
+# Answer GetCompositeSchedule from the limit the hub knows is in effect, so the vendor sees the limit that Home
+# Assistant or its own app set. Without a known limit the vendor is told there is none to report (Rejected).
+def _composite_answer(payload: dict[str, Any], limit_a: float | None) -> dict[str, Any]:
+    connector = payload.get("connectorId")
+    duration = payload.get("duration")
+    if limit_a is None or not is_integer(connector) or not is_integer(duration):
+        return {"status": "Rejected"}
+    period = {"startPeriod": 0, "limit": limit_a}
+    schedule = {"duration": duration, "chargingRateUnit": "A", "chargingSchedulePeriod": [period]}
+    return {"status": "Accepted", "connectorId": connector, "chargingSchedule": schedule}
 
 
 # Describe the configuration the hub read from the charger, as read-only keys.

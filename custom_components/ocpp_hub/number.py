@@ -62,4 +62,8 @@ class ChargeLimitNumber(OcppHubEntity, NumberEntity):
     @property
     def extra_state_attributes(self) -> dict[str, float | str | None]:
         """The pause threshold and the profile purpose the charger accepted, for someone reading the state."""
-        return {"pauses_below_a": CHARGING_MIN_A, "profile_purpose": self._snapshot.limit_purpose}
+        return {
+            "pauses_below_a": CHARGING_MIN_A,
+            "profile_purpose": self._snapshot.limit_purpose,
+            "vendor_limit_a": self._snapshot.vendor_limit_a,
+        }

@@ -28,7 +28,7 @@ from .frames import (
     parse_frame,
 )
 from .metering import merge_samples, parse_meter_values, parse_timestamp
-from .model import ChargerInfo, ChargerSnapshot, ChargeSession, ChargeStats, ConnectorState
+from .model import ChargerInfo, ChargerSnapshot, ChargeSession, ChargeStats, ConnectorState, LimitMemory
 from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +129,18 @@ def _int_field(payload: dict[str, Any], name: str) -> int:
 MAX_TEXT = 64
 
 
+# The limit in amperes that a GetCompositeSchedule answer says is in effect now (its first period), or None when the
+# answer is not an accepted schedule in amperes with a usable limit.
+def _composite_limit(answer: dict[str, Any]) -> float | None:
+    schedule = answer.get("chargingSchedule")
+    periods = schedule.get("chargingSchedulePeriod") if isinstance(schedule, dict) else None
+    if answer.get("status") != "Accepted" or not isinstance(schedule, dict) or not isinstance(periods, list):
+        return None
+    if schedule.get("chargingRateUnit") not in (None, "A") or not periods or not isinstance(periods[0], dict):
+        return None
+    return _finite(periods[0].get("limit"))
+
+
 # A text the charger sent, cut to MAX_TEXT; None when it is not a string or is empty.
 # The port has no authentication and the history is never truncated, so no charger-supplied text is kept unbounded.
 def _text(value: object) -> str | None:
@@ -162,7 +174,7 @@ class ChargerSession:
         settings: SessionSettings | None = None,
         clock: Callable[[], datetime] | None = None,
         resume: Mapping[int, ConnectorState] | None = None,
-        limit: tuple[float | None, str | None] = (None, None),
+        limit: LimitMemory | None = None,
     ) -> None:
         self._connection = connection
         self._listener = listener
@@ -181,7 +193,15 @@ class ChargerSession:
         self._snapshot = ChargerSnapshot(
             cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock(), connectors=dict(resume or {})
         )
-        self._snapshot = replace(self._snapshot, charge_limit_a=limit[0], limit_purpose=limit[1])
+        remembered = limit or LimitMemory()
+        self._snapshot = replace(
+            self._snapshot,
+            charge_limit_a=remembered.hub_a,
+            limit_purpose=remembered.hub_purpose,
+            vendor_limit_a=remembered.vendor_a,
+            vendor_profile_id=remembered.vendor_profile_id,
+            vendor_purpose=remembered.vendor_purpose,
+        )
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
             "Heartbeat": self._heartbeat,
@@ -267,6 +287,33 @@ class ChargerSession:
     def record_limit(self, amps: float | None, purpose: str | None) -> None:
         if self._snapshot.connected:
             self._update(charge_limit_a=amps, limit_purpose=purpose)
+
+    # Remember the limit of a command from the vendor that the charger accepted, with the id and purpose of its profile.
+    # A vendor limit of None means the vendor's profile is gone.
+    def record_vendor_limit(self, amps: float | None, profile_id: int | None, purpose: str | None) -> None:
+        if self._snapshot.connected:
+            self._update(vendor_limit_a=amps, vendor_profile_id=profile_id, vendor_purpose=purpose)
+
+    # Ask for the limit in effect in a task of its own, so a charger that answers slowly or never does not hold up the
+    # write or the command that caused the question.
+    def request_effective_limit(self) -> None:
+        self._start_task(self.refresh_effective_limit())
+
+    # Ask the charger what limit is in effect now and keep the answer. It is a read, and a charger that does not support
+    # it (or does not answer) simply leaves the limit unknown: the hub then shows the lowest of the limits it knows.
+    async def refresh_effective_limit(self) -> None:
+        limit: float | None = None
+        try:
+            answer = await self.call("GetCompositeSchedule", commands.get_composite_schedule(PRIMARY_CONNECTOR))
+        except CallError as error:
+            _LOGGER.info("[read] %s could not tell its effective limit: %s", self.cp_id, error)
+        else:
+            limit = _composite_limit(answer)
+            _LOGGER.info(
+                "[read] %s says its limit in effect is %s A (answer %s)", self.cp_id, limit, answer.get("status")
+            )
+        if self._snapshot.connected:
+            self._update(composite_limit_a=limit)
 
     # Send one frame to the charger and tell the listener about it.
     # Every frame the hub sends passes here, so listeners such as the mirror see the hub's answers too.
@@ -446,6 +493,8 @@ class ChargerSession:
                 if self._snapshot.limit_purpose == commands.PURPOSE_TX:
                     # A charge profile ends with its charge; the next charge is not limited by it.
                     self.record_limit(None, None)
+                if self._snapshot.vendor_purpose == commands.PURPOSE_TX:
+                    self.record_vendor_limit(None, None, None)
         return {"idTagInfo": {"status": "Accepted"}}
 
     # The charge that a StopTransaction ends. Its energy is the meter at the stop minus the meter at the start, or, when
@@ -545,6 +594,7 @@ class ChargerSession:
             try:
                 await self._read_configuration()
                 await self._ensure_metering()
+                await self.refresh_effective_limit()
             except CallError as error:
                 _LOGGER.warning(
                     "Setup of charger %s did not complete (try %s of %s): %s", self.cp_id, attempt, len(delays), error

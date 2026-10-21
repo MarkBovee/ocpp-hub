@@ -32,7 +32,7 @@ from .core.control import CHARGING_MIN_A, ControlPolicy
 from .core.mirror import VendorMirror
 from .core.mirror_model import COMMANDS_REJECT, MirrorSettings, MirrorSettingsError
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
-from .session_store import SessionStore
+from .session_store import LimitStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,12 +119,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     _retire_entities(hass, entry)
     sessions = SessionStore(hass)
     await sessions.async_load()
-    listener = HubListener(hass, entry.entry_id, build, sessions, mirror_enabled=settings is not None)
+    limits = LimitStore(hass)
+    stored_limits = await limits.async_load()
     policy = _control_policy(entry)
     mirror = VendorMirror(settings, policy=policy) if settings is not None else None
     if mirror is not None:
         await mirror.start()
-    central = CentralSystem([listener, *([mirror] if mirror is not None else [])], policy=policy)
+    central = CentralSystem([], policy=policy)
+    central.restore_limits(stored_limits)
+    listener = HubListener(hass, entry.entry_id, build, sessions, limits, mirror_enabled=settings is not None)
+    central.add_listeners([listener, *([mirror] if mirror is not None else [])])
     port = entry.data[CONF_PORT]
     try:
         await central.start(BIND_HOST, port)
@@ -133,7 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
     try:
-        entry.runtime_data = HubRuntime(central, listener, mirror, sessions)
+        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
@@ -171,4 +175,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> 
             await _stop_runtime(entry.runtime_data.central, entry.runtime_data.mirror)
         finally:
             await entry.runtime_data.sessions.async_flush()
+            await entry.runtime_data.limits.async_flush()
     return unloaded

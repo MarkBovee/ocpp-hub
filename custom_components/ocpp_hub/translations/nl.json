@@ -118,6 +118,9 @@
       },
       "mirror_queue": {
         "name": "Wachtrij mirror"
+      },
+      "limit_in_effect": {
+        "name": "Geldende limiet"
       }
     },
     "binary_sensor": {

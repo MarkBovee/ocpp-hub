@@ -1,0 +1,156 @@
+"""The limits that apply to a charger: the hub's, the vendor's, what the charger says, and what survives a restart."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from ocpp_hub_core import readings
+from ocpp_hub_core.model import LimitMemory
+
+from tests.fake_vendor import eventually
+
+PROFILE = {
+    "connectorId": 1,
+    "csChargingProfiles": {
+        "chargingProfileId": 5,
+        "stackLevel": 0,
+        "chargingProfilePurpose": "ChargePointMaxProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": {"chargingRateUnit": "A", "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 10}]},
+    },
+}
+
+
+# A booted fake charger behind a hub, with the control of its session.
+async def _booted(start_hub: Any) -> tuple[Any, Any, Any]:
+    hub = await start_hub()
+    charger = await hub.charger()
+    await charger.boot()
+    return hub, charger, hub.central.control("TEST0001")
+
+
+# Set a limit through the control while the fake charger accepts the profile it receives.
+async def _set(control: Any, charger: Any, amps: float) -> None:
+    task = asyncio.create_task(control.set_current_limit(amps))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await task
+
+
+# Intent: after the hub sets a limit it asks the charger what is in effect; the answer wins over what the hub computes,
+# and a charger that cannot answer leaves the lowest limit the hub knows.
+# Why: the hub's own limit and the vendor's can both apply and the charger takes the lower; only the charger knows what
+# it really does, and the hub must not show more certainty than it has.
+async def test_the_limit_in_effect_comes_from_the_charger_when_it_can_say(start_hub) -> None:
+    hub, charger, control = await _booted(start_hub)
+
+    await _set(control, charger, 8)
+    await eventually(lambda: hub.listener.latest.charge_limit_a == 8.0)
+    await asyncio.sleep(0.1)
+    fallback = readings.effective_limit_a(hub.listener.latest)
+
+    charger.composite_limit = 6.0
+    await _set(control, charger, 8)
+    await eventually(lambda: hub.listener.latest.composite_limit_a == 6.0, message="composite not read")
+
+    assert fallback == 8.0 and hub.listener.latest.composite_limit_a == 6.0
+    assert readings.effective_limit_a(hub.listener.latest) == 6.0
+
+
+# Intent: with forwarding on, a profile the vendor sets and the charger accepts shows up as the vendor's limit, the
+# lower of the two is the one in effect, and clearing the profile removes it.
+# Why: a limit set in the vendor's app must show in Home Assistant too, next to the one Home Assistant set.
+async def test_a_limit_set_in_the_vendor_app_shows_in_home_assistant(start_rig) -> None:
+    rig = await start_rig(commands="forward")
+    charger = await rig.hub.charger()
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+    control = rig.hub.central.control("TEST0001")
+    await _set(control, charger, 16)
+    await eventually(lambda: rig.hub.listener.latest.charge_limit_a == 16.0)
+
+    set_task = asyncio.create_task(rig.vendor.command("SetChargingProfile", PROFILE))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await set_task
+    await eventually(lambda: rig.hub.listener.latest.vendor_limit_a == 10.0, message="vendor limit not shown")
+    lowest = readings.effective_limit_a(rig.hub.listener.latest)
+
+    clear_task = asyncio.create_task(rig.vendor.command("ClearChargingProfile", {"id": 5}))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await clear_task
+    await eventually(lambda: rig.hub.listener.latest.vendor_limit_a is None, message="vendor limit not cleared")
+
+    assert lowest == 10.0 and rig.hub.listener.latest.charge_limit_a == 16.0
+
+
+# Intent: the vendor asking for the composite schedule is answered with the limit in effect, and told there is none when
+# nothing is known.
+# Why: this is how a limit set in Home Assistant reaches the vendor, besides the offered current in the meter values.
+async def test_the_vendor_is_told_the_limit_in_effect(start_rig) -> None:
+    rig = await start_rig()
+    charger = await rig.hub.charger()
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+    unknown = await rig.vendor.command("GetCompositeSchedule", {"connectorId": 1, "duration": 600})
+    control = rig.hub.central.control("TEST0001")
+    await _set(control, charger, 6)
+    await eventually(lambda: rig.hub.listener.latest.charge_limit_a == 6.0)
+
+    known = await rig.vendor.command("GetCompositeSchedule", {"connectorId": 1, "duration": 600})
+
+    assert unknown[2] == {"status": "Rejected"}
+    period = known[2]["chargingSchedule"]["chargingSchedulePeriod"][0]
+    assert known[2]["status"] == "Accepted" and period == {"startPeriod": 0, "limit": 6.0}
+
+
+# Intent: limits restored from storage show on a charger that connects, a vendor charge profile is not restored, and a
+# limit survives a reconnect.
+# Why: after a restart of Home Assistant the number must show what was last set instead of "unknown", while a charge
+# profile died with its charge.
+async def test_remembered_limits_show_when_the_charger_connects(start_hub) -> None:
+    hub = await start_hub()
+    hub.central.restore_limits(
+        {
+            "TEST0001": LimitMemory(
+                hub_a=6.0,
+                hub_purpose="ChargePointMaxProfile",
+                vendor_a=10.0,
+                vendor_profile_id=5,
+                vendor_purpose="TxProfile",
+            )
+        }
+    )
+    charger = await hub.charger()
+    await charger.boot()
+
+    shown = hub.listener.latest
+    assert shown.charge_limit_a == 6.0 and shown.limit_purpose == "ChargePointMaxProfile"
+    await charger.close()
+    await charger.wait_closed()
+    again = await hub.charger()
+    await again.boot()
+
+    assert hub.central.limit_memory("TEST0001").hub_a == 6.0
+    assert hub.central.limit_memory("TEST0001").vendor_a is None
+    assert hub.listener.latest.charge_limit_a == 6.0
+
+
+# Intent: a limit the vendor set with a charge profile is forgotten when that charge stops.
+# Why: a charge profile ends with its charge; Home Assistant must not keep showing a limit that no longer applies.
+async def test_a_vendor_charge_profile_limit_ends_with_the_charge(start_hub) -> None:
+    hub, charger, _ = await _booted(start_hub)
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    hub.central.session("TEST0001").record_vendor_limit(10.0, 5, "TxProfile")
+    assert hub.listener.latest.vendor_limit_a == 10.0
+
+    await charger.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 1, "timestamp": "2026-10-21T09:00:00Z"},
+    )
+
+    assert hub.listener.latest.vendor_limit_a is None

@@ -167,3 +167,13 @@ def problem(snapshot: ChargerSnapshot) -> bool | None:
     if connector is None:
         return None
     return connector.status == "Faulted" or connector.error_code != "NoError"
+
+
+# The limit in effect on the charger, in amperes. What the charger itself says (GetCompositeSchedule) wins; when it
+# cannot say, the lowest of the limits the hub knows of: its own and the vendor's, because the charger applies the
+# lower. None when no limit is known.
+def effective_limit_a(snapshot: ChargerSnapshot) -> float | None:
+    if snapshot.composite_limit_a is not None:
+        return snapshot.composite_limit_a
+    known = [limit for limit in (snapshot.charge_limit_a, snapshot.vendor_limit_a) if limit is not None]
+    return min(known) if known else None

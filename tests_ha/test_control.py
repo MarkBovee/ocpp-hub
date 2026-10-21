@@ -113,3 +113,28 @@ async def test_the_clear_button_removes_the_hub_profile(
     await wait_for(hass, lambda: state_of(hass, LIMIT) == "unknown", "limit not cleared")
 
     assert request[2] == "ClearChargingProfile" and request[3] == {"id": 7001}
+
+
+# Intent: the limit Home Assistant set is saved, shows again after the entry is reloaded and the charger reconnects, and
+# the limit-in-effect sensor shows it with its source.
+# Why: a restart of Home Assistant used to leave the number on "unknown" while the charger still held the limit, which
+# hid a pause; the saved value is also what the vendor is told when it asks.
+async def test_the_limit_is_saved_and_shown_again_after_a_reload(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    entry = await setup_hub()
+    charger = await connect_charger(entry)
+    await charger.boot()
+    await wait_for(hass, lambda: state_of(hass, LIMIT) is not None, "no entities")
+    in_effect = "sensor.ocpp_hub_test0001_limit_in_effect"
+    await _call_and_answer(hass, charger, "number", "set_value", {"entity_id": LIMIT, "value": 6})
+    await wait_for(hass, lambda: state_of(hass, in_effect) == "6.0", "limit in effect not shown")
+    source = hass.states.get(in_effect).attributes["source"]
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    again = await connect_charger(entry)
+    await again.boot()
+    await wait_for(hass, lambda: state_of(hass, LIMIT) == "6.0", "limit not shown after the reload")
+
+    assert source == "calculated" and state_of(hass, in_effect) == "6.0"

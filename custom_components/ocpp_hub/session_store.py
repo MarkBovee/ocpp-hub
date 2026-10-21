@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .core.model import ChargeSession
+from .core.model import ChargeSession, LimitMemory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,3 +60,41 @@ class SessionStore:
     # How many charges one charger, or all, have in the history.
     def count(self, cp_id: str | None = None) -> int:
         return sum(1 for s in self._sessions if cp_id is None or s.cp_id == cp_id)
+
+
+LIMITS_STORAGE_KEY = f"{DOMAIN}.limits"
+
+
+class LimitStore:
+    """The limits of each charger (the hub's and the vendor's), so they show again after a restart of Home Assistant."""
+
+    # Keep the storage handle; nothing is read until async_load.
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, LIMITS_STORAGE_KEY)
+        self._limits: dict[str, LimitMemory] = {}
+
+    # Read the saved limits. A record that cannot be read is skipped with a warning.
+    async def async_load(self) -> dict[str, LimitMemory]:
+        stored = await self._store.async_load() or {}
+        for cp_id, record in (stored.get("limits") or {}).items():
+            try:
+                self._limits[cp_id] = LimitMemory.from_dict(record)
+            except KeyError, TypeError, ValueError:
+                _LOGGER.warning("Skipping an unreadable limit record in storage")
+        return dict(self._limits)
+
+    # Keep the limits of one charger and schedule a save; an empty memory removes the charger.
+    def update(self, cp_id: str, memory: LimitMemory) -> None:
+        if memory.empty:
+            self._limits.pop(cp_id, None)
+        else:
+            self._limits[cp_id] = memory
+        self._store.async_delay_save(self._data, SAVE_DELAY_S)
+
+    # Save now; used when the entry unloads.
+    async def async_flush(self) -> None:
+        await self._store.async_save(self._data())
+
+    # The limits as the JSON that is written.
+    def _data(self) -> dict[str, Any]:
+        return {"limits": {cp_id: memory.to_dict() for cp_id, memory in self._limits.items()}}

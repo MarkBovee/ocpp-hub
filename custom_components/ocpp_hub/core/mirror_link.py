@@ -15,6 +15,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.typing import Subprotocol
 
+from . import readings
 from .control import ControlPolicy, plain_text
 from .frames import (
     ERROR_FORMATION_VIOLATION,
@@ -33,7 +34,7 @@ from .frames import (
     parse_frame,
 )
 from .mirror_commands import TriggerRequest, answer_vendor_call
-from .mirror_forward import FORWARDED, Forward, plan_forward, refusal_for
+from .mirror_forward import FORWARDED, Forward, plan_forward, profile_limit_a, refusal_for
 from .mirror_model import COMMANDS_FORWARD, MirrorSettings, MirrorStatus
 from .mirror_queue import (
     ACTION_BOOT,
@@ -370,7 +371,12 @@ class MirrorLink:
             self._start_forward(connection, unique_id, action, frame[3])
             return
         answer = answer_vendor_call(
-            unique_id, action, frame[3], self._session.snapshot.configuration, self._can_trigger
+            unique_id,
+            action,
+            frame[3],
+            self._session.snapshot.configuration,
+            self._can_trigger,
+            readings.effective_limit_a(self._session.snapshot),
         )
         _LOGGER.info("Vendor backend sent %s for %s; answered without passing it to the charger", action, self.cp_id)
         _LOGGER.debug("Vendor command %s payload for %s: %s", action, self.cp_id, frame[3])
@@ -420,10 +426,29 @@ class MirrorLink:
         _LOGGER.info(
             "[forward] Vendor %s for %s passed on; the charger answered %s", action, self.cp_id, answer.get("status")
         )
-        if action == "ClearChargingProfile" and answer.get("status") == "Accepted" and set(payload) - {"id"}:
-            # Clearing without an id, or by filters, can remove the hub's own profile as well.
-            self._session.record_limit(None, None)
+        if answer.get("status") == "Accepted":
+            self._note_accepted(action, plan.payload)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))
+
+    # Take over what an accepted command of the vendor changed on the charger: the vendor's limit for a profile it set
+    # or cleared, and the hub's own limit when a clear without an id (or by filters) could have removed that as well.
+    # Then the charger is asked, in the background, what limit is really in effect now.
+    def _note_accepted(self, action: str, payload: dict[str, Any]) -> None:
+        snapshot = self._session.snapshot
+        if action == "SetChargingProfile":
+            profile = payload.get("csChargingProfiles", {})
+            self._session.record_vendor_limit(
+                profile_limit_a(profile), profile.get("chargingProfileId"), profile.get("chargingProfilePurpose")
+            )
+        elif action == "ClearChargingProfile":
+            if "id" not in payload or payload["id"] == snapshot.vendor_profile_id:
+                self._session.record_vendor_limit(None, None, None)
+            if set(payload) - {"id"}:
+                self._session.record_limit(None, None)
+                self._session.record_vendor_limit(None, None, None)
+        else:
+            return
+        self._session.request_effective_limit()
 
     # Send a frame to the vendor; a vendor that left meanwhile has no use for the answer.
     async def _send_to_vendor(self, connection: ClientConnection, text: str) -> None:

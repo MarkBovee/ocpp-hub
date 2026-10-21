@@ -97,6 +97,13 @@ class ChargerSnapshot:
     # none on this connection. The charger is not asked what it holds, so this is what the hub knows it wrote.
     charge_limit_a: float | None = None
     limit_purpose: str | None = None
+    # The limit the vendor backend set through a command that was passed on (the lowest limit of its profile), the id of
+    # that profile and its purpose. A charge profile of the vendor ends with its charge.
+    vendor_limit_a: float | None = None
+    vendor_profile_id: int | None = None
+    vendor_purpose: str | None = None
+    # What the charger itself says is in effect right now, from GetCompositeSchedule; None when it cannot say.
+    composite_limit_a: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,4 +171,47 @@ class ChargeSession:
             offered_a=data.get("offered_a"),
             limit_a=data.get("limit_a"),
             stop_reason=data.get("stop_reason"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LimitMemory:
+    """The limits that survive a reconnect or a restart: the hub's own and the vendor's, as far as the hub knows."""
+
+    hub_a: float | None = None
+    hub_purpose: str | None = None
+    vendor_a: float | None = None
+    vendor_profile_id: int | None = None
+    vendor_purpose: str | None = None
+
+    @property
+    def empty(self) -> bool:
+        """True when there is nothing to remember."""
+        return self.hub_a is None and self.vendor_a is None
+
+    # The memory as plain JSON values.
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "hub_a": self.hub_a,
+            "hub_purpose": self.hub_purpose,
+            "vendor_a": self.vendor_a,
+            "vendor_profile_id": self.vendor_profile_id,
+            "vendor_purpose": self.vendor_purpose,
+        }
+
+    # Rebuild the memory from what to_dict wrote; a record with the wrong types raises, so the caller can skip it.
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> LimitMemory:
+        # A stored number as a float, or None when it is missing.
+        def number(key: str) -> float | None:
+            value = data.get(key)
+            return float(value) if value is not None else None
+
+        profile_id = data.get("vendor_profile_id")
+        return cls(
+            hub_a=number("hub_a"),
+            hub_purpose=data.get("hub_purpose"),
+            vendor_a=number("vendor_a"),
+            vendor_profile_id=int(profile_id) if profile_id is not None else None,
+            vendor_purpose=data.get("vendor_purpose"),
         )

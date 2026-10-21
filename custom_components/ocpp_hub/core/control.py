@@ -108,6 +108,7 @@ class ChargerControl:
             outcomes.append(f"{purpose}={status}")
             if status == "Accepted":
                 self._session.record_limit(amps, purpose)
+                self._session.request_effective_limit()
                 _LOGGER.info(
                     "[write] Charge limit %s A (asked %s A) accepted by %s as %s",
                     amps,
@@ -126,6 +127,7 @@ class ChargerControl:
         if status not in ("Accepted", "Unknown"):
             raise ControlError("rejected", f"ClearChargingProfile={status}")
         self._session.record_limit(None, None)
+        self._session.request_effective_limit()
         _LOGGER.info("[write] Charge limit of %s cleared (%s)", self._session.cp_id, status)
 
     # Start a charge on the socket, as if a tag was presented. The car must be connected for the charger to accept.

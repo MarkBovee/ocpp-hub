@@ -21,6 +21,7 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 
 ## In progress
 
+- [~] Limit sync: the hub's and the vendor's limit are saved in Home Assistant, shown together with the limit in effect (read from the charger when it can say), and the vendor is answered with it. Tested with a fake charger and vendor; whether the NEO answers `GetCompositeSchedule` is not known yet.
 - [~] Socket entities `plugged_in`, `car_charging`, `problem` and `error_code`, derived from the status and error code; and a debug log of the raw frames. Tested with a fake charger; not yet seen on the NEO.
 - [~] Charge sessions: a current-session sensor, an unbounded stored history, `_last_session` with the newest charges, the service `ocpp_hub.get_sessions`, and a ready dashboard (`docs/dashboard.md`). Tested with a fake charger; not yet seen with a real charge.
 - [~] Control: a charge limit `number` (0 to the ceiling, default 16 A, under 6 A pauses) and a start/stop `switch`, through one guarded write path in `core/control.py`. Tested with a fake charger; whether the NEO obeys a charging profile is unproven.
@@ -31,7 +32,7 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 - [ ] Check the vendor side of a real charge: that the status changes and the charge show up in the Raedian app, and what the vendor sends back.
 - [ ] Read the raw frames of a charge (logger `custom_components.ocpp_hub.frames` at debug) to see every measurand and field the NEO sends, and decide from that which further entities are worth making.
 - [ ] Measure a full restart of Home Assistant (a reload is measured: 14 seconds).
-- [ ] Remember the charge limit the hub set across a restart of Home Assistant (today it survives a reconnect only; the clear button removes the hub's profile).
+- [ ] Read and set a charging schedule (several periods, for example a lower limit at night, recurring daily): reading is `GetCompositeSchedule` over a longer duration; setting needs a `SetChargingProfile` with periods under the same ceiling and a service to set and clear it. Whether the NEO runs recurring or absolute schedules is unproven.
 - [ ] Persist the mirror queue and a charge that is running across a restart of Home Assistant (today both are lost; documented in the README).
 - [ ] Optional username default for the vendor: use the charger's serial when only a password is given. Build only if the vendor answers HTTP 401.
 - [ ] Make the repository public, switch on HACS validation, tag a release. Version and changelog are still `0.1.0` / unreleased.
