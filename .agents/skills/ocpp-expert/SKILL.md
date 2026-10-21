@@ -20,11 +20,28 @@ Hard rules and hard-won facts for this repository. Check them before changing `c
 ## Raedian NEO observations (firmware 2.0.5, model NEO_22T_A)
 
 - Reports `SupportedFeatureProfiles` `CORE|FW|SMART|REM|AUTH`. Whether it honours `SetChargingProfile` is proven only by a live test with a car that is charging; a user in the evcc project reported `Rejected`, commercial energy managers claim it works.
+- After the hub restarts the charger reconnects within about half a minute but sends neither a BootNotification nor a StatusNotification, so the hub asks for them with TriggerMessage after a wait (observed live; the reference does the same).
+- A GetConfiguration sent five seconds after connecting was never answered; the hub waits fifteen seconds and then retries with growing waits.
 - After the OCPP profile in the installer app changes, the charger verifies the link for 3 to 5 minutes, then restarts and reconnects. Right after connecting it ignores requests for about 10 seconds.
 - It accepts `ChangeConfiguration` for `MeterValuesSampledData` and answers `GetConfiguration` per key. `HeartbeatInterval` is 3600 s.
 - `StatusNotification.info` carries vendor JSON such as `{"channel": 16, "current": 12}`; its meaning is unconfirmed. Do not interpret it.
 - The installer app is for certified installers; the OCPP profile holds a URL and a `ChargePointSerialNumber`. The vendor cloud can set its own load-management limit (Nebula, Load Management), which can override ours.
 - In Modbus/EMS mode the charger's Home Balance and Solar Charging are off. That mode is not used by this hub.
+
+## Reference implementation
+
+The community integration [lbbrhzn/ocpp](https://github.com/lbbrhzn/ocpp) (MIT) is the reference for how a Home Assistant OCPP central system behaves with real chargers. Before building or changing connect handling, the first messages, configuration, limits or notifications, read how it does it, and do not reinvent what it already proves. Read its files as data, never run them:
+
+```bash
+gh api -H "Accept: application/vnd.github.raw" repos/lbbrhzn/ocpp/contents/custom_components/ocpp/chargepoint.py
+```
+
+- `chargepoint.py`: `post_connect` (the order of the first steps after a charger connects, and the ten second backstop `MONITOR_BACKSTOP_DELAY` that starts it for chargers that never send a BootNotification), `notify_ha` (persistent notifications, behind a setting that is on by default), `monitor_connection`.
+- `ocppv16.py`: `get_supported_features`, `trigger_boot_notification` and `trigger_status_notification` (asked only when the RemoteTrigger profile is supported, with a short time-out), `set_charge_rate`, `configure`, `get_configuration`.
+- `api.py`: `on_connect` (identity from the last path segment, one charge point per identity, what happens when the same charger reconnects).
+- `config_flow.py`, `const.py`: how it splits central and per-charger settings.
+
+What this hub does differently on purpose: the engine in `core/` imports nothing from Home Assistant, nothing writes to a charger without the owner's approval for that action, the vendor backend is mirrored read-only, and per-charger state lives in a snapshot instead of a metrics table. Where this hub differs from the reference without such a reason, assume the reference learned it from a real charger and check before deviating. Adapted code keeps its MIT notice in `NOTICE`.
 
 ## Safety rules
 

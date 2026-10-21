@@ -41,6 +41,10 @@ python3 -m venv .venv-ha
 - Name data shapes (dataclasses) instead of passing loose dictionaries around.
 - Never write to a charger from tests against a real device. The engine is tested with a fake charger over a real websocket.
 
+## Reference implementation
+
+When you build or change how the hub handles a charger, read how [lbbrhzn/ocpp](https://github.com/lbbrhzn/ocpp) (MIT) does it first and reuse what it proved on real chargers; `.agents/skills/ocpp-expert/SKILL.md` lists the files and functions to read. Compare the result with what the Raedian NEO really does, and credit adapted code in `NOTICE`.
+
 ## Fixtures
 
 Recorded charger sessions go in `tests/fixtures/` byte for byte, with a note of where and when they were captured. Raw local captures (`capture_*.jsonl`) can hold card ids and serial numbers, so they stay out of git. Do not trim a capture to the frames that look relevant; the frames you leave out are where bugs hide.
