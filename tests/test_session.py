@@ -279,14 +279,16 @@ async def test_charger_that_introduces_itself_is_not_asked(start_hub) -> None:
         await charger.next_hub_call(timeout=0.8)
 
 
-# Intent: stopping the hub closes every charger connection with the "service restart" code.
-# Why: the default "going away" code made the Raedian NEO wait for minutes before it dialled again after a reload.
-async def test_stopping_the_hub_tells_chargers_it_is_restarting(start_hub) -> None:
+# Intent: stopping the hub drops every charger connection without a closing handshake, and the sessions end cleanly.
+# Why: the Raedian NEO waits for minutes after any proper close and returns in seconds after a lost connection.
+async def test_stopping_the_hub_drops_chargers_without_a_closing_handshake(start_hub) -> None:
     hub = await start_hub()
     charger = await hub.charger()
     await charger.boot()
 
     await hub.central.stop()
     await charger.wait_closed()
+    await asyncio.sleep(0.05)
 
-    assert charger.close_code == 1012
+    assert charger.close_code == 1006
+    assert hub.listener.disconnected == ["TEST0001"] and hub.listener.latest.connected is False

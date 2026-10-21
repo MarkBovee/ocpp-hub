@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -23,9 +22,6 @@ _LOGGER = logging.getLogger(__name__)
 SUPPORTED_SUBPROTOCOLS = ["ocpp1.6"]
 
 CLOSE_BAD_REQUEST = 4001
-# RFC 6455 / IANA close code 1012: the server is restarting and the client may reconnect soon. A charger that sees the
-# default 1001 ("going away") may read it as the end of the conversation and wait a long time before it dials again.
-CLOSE_SERVICE_RESTART = 1012
 
 
 class CentralSystem:
@@ -57,16 +53,15 @@ class CentralSystem:
         self._server = await serve(self._handle, host, port, subprotocols=list(SUPPORTED_SUBPROTOCOLS))
         _LOGGER.info("OCPP server listening on %s:%s", host, port)
 
-    # Stop accepting chargers and close the open connections with the "service restart" code.
-    # The code tells a charger that the hub is only restarting, so it can come back soon.
+    # Stop accepting chargers and drop the open connections without a closing handshake.
+    # A charger that is closed properly waits minutes before it dials again, one that loses its connection comes back
+    # within half a minute, and a reload of the integration should not cost the owner his charger for minutes.
     async def stop(self) -> None:
         if self._server is None:
             return
         self._server.close(close_connections=False)
-        await asyncio.gather(
-            *(session.close(CLOSE_SERVICE_RESTART, "hub restarting") for session in list(self._sessions.values())),
-            return_exceptions=True,
-        )
+        for session in list(self._sessions.values()):
+            session.abort()
         await self._server.wait_closed()
         self._server = None
 

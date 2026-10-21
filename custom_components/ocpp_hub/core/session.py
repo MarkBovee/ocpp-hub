@@ -189,10 +189,18 @@ class ChargerSession:
             self._listener.on_snapshot(self._snapshot)
             self._listener.on_disconnected(self.cp_id)
 
-    # Close the connection from the hub's side, with the given close code and reason.
-    # Used when the same charger reconnects before the hub noticed the old link dying, and when the hub stops.
-    async def close(self, code: int = 1000, reason: str = "") -> None:
-        await self._connection.close(code, reason)
+    # Close the connection from the hub's side.
+    # Used when the same charger reconnects before the hub noticed the old link dying.
+    async def close(self) -> None:
+        await self._connection.close()
+
+    # Drop the connection without a closing handshake, the way a crash or a restart of Home Assistant would.
+    # The Raedian NEO stays away for minutes after a proper close, whatever the close code (1000, 1001 and 1012 were all
+    # tried live), and is back within half a minute when the connection simply vanishes.
+    def abort(self) -> None:
+        transport = getattr(self._connection, "transport", None)
+        if transport is not None:
+            transport.abort()
 
     # Send a request to the charger and return the payload of its answer.
     # One request at a time per direction is a protocol rule, so calls are serialised with a lock.
