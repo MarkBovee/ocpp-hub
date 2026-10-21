@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from websockets.asyncio.server import Server, ServerConnection, serve
 
 from .frames import Frame
-from .model import ChargerSnapshot
+from .model import ChargerSnapshot, ChargeSession
 from .session import ChargerSession, SessionListener, SessionSettings
 
 _LOGGER = logging.getLogger(__name__)
@@ -146,3 +146,7 @@ class _Fanout:
     # Forward a disconnect.
     def on_disconnected(self, cp_id: str) -> None:
         self._each("on_disconnected", cp_id)
+
+    # Forward a finished charge.
+    def on_session_finished(self, session: ChargeSession) -> None:
+        self._each("on_session_finished", session)

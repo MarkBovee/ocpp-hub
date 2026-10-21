@@ -16,7 +16,7 @@ from datetime import datetime
 from .frames import Frame
 from .mirror_link import MirrorLink
 from .mirror_model import MirrorSettings, MirrorStatus
-from .model import ChargerSnapshot
+from .model import ChargerSnapshot, ChargeSession
 from .session import SENDER_CHARGER, SENDER_HUB, ChargerSession
 from .txid_map import TransactionIdMap
 
@@ -95,6 +95,10 @@ class VendorMirror:
             link.charger_frame(frame)
         elif sender == SENDER_HUB:
             link.hub_frame(frame)
+
+    # Finished charges are the entities' business; the mirror forwards frames, which already carry them.
+    def on_session_finished(self, session: ChargeSession) -> None:
+        return None
 
     # A charger session ended. When a newer session of the same charger already took over, the end of the old one is
     # not a reason to stop anything; the old session's disconnect can arrive after the new one connected.

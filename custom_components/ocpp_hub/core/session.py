@@ -26,8 +26,8 @@ from .frames import (
     build_call_result,
     parse_frame,
 )
-from .metering import parse_meter_values
-from .model import ChargerInfo, ChargerSnapshot, ConnectorState
+from .metering import parse_meter_values, parse_timestamp
+from .model import ChargerInfo, ChargerSnapshot, ChargeSession, ConnectorState
 from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,6 +68,8 @@ class SessionListener(Protocol):
     def on_frame(self, cp_id: str, sender: str, frame: Frame) -> None: ...
 
     def on_disconnected(self, cp_id: str) -> None: ...
+
+    def on_session_finished(self, session: ChargeSession) -> None: ...
 
 
 class CallError(Exception):
@@ -333,13 +335,28 @@ class ChargerSession:
         )
         return {}
 
-    # Keep the newest meter reading.
+    # Keep the newest meter reading, and the highest power of the charge that is running.
     # A payload without usable values is acknowledged and ignored.
     def _meter_values(self, payload: dict[str, Any]) -> dict[str, Any]:
         sample = parse_meter_values(payload, self._clock())
-        if sample is not None:
-            self._update(meter=sample)
+        if sample is None:
+            return {}
+        connectors = dict(self._snapshot.connectors)
+        running = self._running_connector(payload)
+        if running is not None and sample.power_w is not None:
+            peak = max(sample.power_w, running.max_power_w or 0.0)
+            connectors[running.connector_id] = replace(running, max_power_w=peak)
+        self._update(meter=sample, connectors=connectors)
         return {}
+
+    # The connector a meter reading belongs to: the one it names, or the only one with a charge running.
+    def _running_connector(self, payload: dict[str, Any]) -> ConnectorState | None:
+        named = payload.get("connectorId")
+        if isinstance(named, int) and not isinstance(named, bool):
+            connector = self._snapshot.connectors.get(named)
+            return connector if connector is not None and connector.transaction_id is not None else None
+        running = [c for c in self._snapshot.connectors.values() if c.transaction_id is not None]
+        return running[0] if len(running) == 1 else None
 
     # Hand out a transaction id and remember which connector it runs on.
     # Every tag is accepted: this is a private charger on a trusted network, and refusing one only strands the owner.
@@ -353,18 +370,61 @@ class ChargerSession:
                 transaction_id=transaction_id,
                 id_tag=str(payload.get("idTag", "")),
                 meter_start_wh=float(meter_start) if isinstance(meter_start, (int, float)) else None,
+                started_at=parse_timestamp(payload.get("timestamp"), self._clock()),
+                max_power_w=None,
             )
         )
         return {"transactionId": transaction_id, "idTagInfo": {"status": "Accepted"}}
 
-    # Clear the transaction from the connector that ran it.
-    # The id comes from the charger, so a stop for an unknown id is acknowledged without touching other sessions.
+    # Clear the transaction from the connector that ran it, and report the finished charge.
+    # The id comes from the charger, so a stop for an unknown id (for example one that started before the hub
+    # restarted) is acknowledged without touching other sessions and without inventing a charge.
     def _stop_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         transaction_id = _int_field(payload, "transactionId")
-        for connector in self._snapshot.connectors.values():
+        for connector in list(self._snapshot.connectors.values()):
             if connector.transaction_id == transaction_id:
-                self._update_connector(replace(connector, transaction_id=None, id_tag=None, meter_start_wh=None))
+                finished = self._finished_session(connector, transaction_id, payload)
+                self._update_connector(
+                    replace(
+                        connector,
+                        transaction_id=None,
+                        id_tag=None,
+                        meter_start_wh=None,
+                        started_at=None,
+                        max_power_w=None,
+                    )
+                )
+                self._listener.on_session_finished(finished)
         return {"idTagInfo": {"status": "Accepted"}}
+
+    # The charge that a StopTransaction ends. Its energy is the meter at the stop minus the meter at the start, or, when
+    # the charger sent no stop reading, the last meter value seen; None when the start reading is missing.
+    def _finished_session(
+        self, connector: ConnectorState, transaction_id: int, payload: dict[str, Any]
+    ) -> ChargeSession:
+        ended_at = parse_timestamp(payload.get("timestamp"), self._clock())
+        stop = payload.get("meterStop")
+        meter_stop = float(stop) if isinstance(stop, (int, float)) and not isinstance(stop, bool) else None
+        last = self._snapshot.meter.energy_wh if self._snapshot.meter is not None else None
+        end_reading = meter_stop if meter_stop is not None else last
+        start_reading = connector.meter_start_wh
+        energy = (
+            max(end_reading - start_reading, 0.0) if start_reading is not None and end_reading is not None else None
+        )
+        reason = payload.get("reason")
+        return ChargeSession(
+            cp_id=self.cp_id,
+            connector_id=connector.connector_id,
+            transaction_id=transaction_id,
+            id_tag=connector.id_tag or None,
+            started_at=connector.started_at or ended_at,
+            ended_at=ended_at,
+            meter_start_wh=start_reading,
+            meter_stop_wh=meter_stop,
+            energy_wh=energy,
+            max_power_w=connector.max_power_w,
+            stop_reason=reason if isinstance(reason, str) else None,
+        )
 
     # Accept an authorisation request.
     # See _start_transaction: every tag is accepted.

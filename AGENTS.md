@@ -57,5 +57,5 @@ Full procedure: [docs/release-process.md](docs/release-process.md). One version 
 ## Git and documentation
 
 - Never commit to `main`. Branches: `feature/<name>`, `fix/<name>`, `refactor/<name>`, `docs/<name>`. Conventional Commits (`feat(scope):`, `fix(scope):`, `docs(scope):`). Keep changes focused.
-- `README.md` and `CHANGELOG.md` are the documentation. Do not add report, summary or status files. `docs/` holds long-lived guides only.
+- `README.md` and `CHANGELOG.md` are the documentation. Do not add report, summary or status files. `docs/` holds long-lived guides only. The exception is `docs/roadmap.md`, the one place for progress, which the owner asked for: move an item in the same change that finishes it.
 - Wait for CI with the pull request status tool, not with a polling loop.

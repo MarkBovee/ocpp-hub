@@ -12,12 +12,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.translation import async_get_translations
 
-from .const import DOMAIN, charger_notification_id, new_charger_signal, snapshot_signal
+from .const import DOMAIN, charger_notification_id, new_charger_signal, session_signal, snapshot_signal
 from .core.central import CentralSystem
 from .core.frames import Frame
 from .core.mirror import VendorMirror
-from .core.model import ChargerSnapshot
+from .core.model import ChargerSnapshot, ChargeSession
 from .core.session import ChargerSession
+from .session_store import SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,8 +43,11 @@ class HubListener:
     """Hands what the central system reports to Home Assistant: new chargers and every new snapshot."""
 
     # Keep what is needed to send signals; nothing is sent before the first charger connects.
-    def __init__(self, hass: HomeAssistant, entry_id: str, build: str, mirror_enabled: bool = False) -> None:
+    def __init__(
+        self, hass: HomeAssistant, entry_id: str, build: str, sessions: SessionStore, mirror_enabled: bool = False
+    ) -> None:
         self._hass = hass
+        self._sessions = sessions
         self._entry_id = entry_id
         self._build = build
         self._mirror_enabled = mirror_enabled
@@ -111,6 +115,18 @@ class HubListener:
     def on_frame(self, cp_id: str, sender: str, frame: Frame) -> None:
         return None
 
+    # Keep a finished charge in the history and tell the entities that show it.
+    def on_session_finished(self, session: ChargeSession) -> None:
+        self._sessions.add(session)
+        _LOGGER.info(
+            "[build %s] Charge on %s finished: %s Wh in %s s",
+            self._build,
+            session.cp_id,
+            session.energy_wh,
+            int(session.duration_s),
+        )
+        async_dispatcher_send(self._hass, session_signal(self._entry_id, session.cp_id))
+
     # The final snapshot with connected=False already told the entities; the log line is for the owner.
     def on_disconnected(self, cp_id: str) -> None:
         _LOGGER.info("[build %s] Charger %s disconnected", self._build, cp_id)
@@ -123,6 +139,7 @@ class HubRuntime:
     central: CentralSystem
     listener: HubListener
     mirror: VendorMirror | None
+    sessions: SessionStore
 
 
 type OcppHubConfigEntry = ConfigEntry[HubRuntime]

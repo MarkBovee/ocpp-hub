@@ -2,7 +2,7 @@
 
 A Home Assistant integration that acts as the local OCPP 1.6 backend of your EV charger, and can pass a read-only copy of everything the charger says on to the manufacturer's own backend.
 
-> **Status: early.** The OCPP server and the entities run against a real Raedian NEO. The vendor mirror is tested against a fake vendor backend only; it has not yet connected to the real one, because that backend's address is not public. Nothing writes to a charger apart from two metering settings: there are no limit or start/stop controls. The changelog says what each release really does.
+> **Status: early.** The OCPP server, the entities and the vendor mirror run against a real Raedian NEO, and the Raedian app shows the charger online through the mirror. Charging with a car has not been observed yet, so what the charger sends during a charge is untested. Nothing writes to a charger apart from two metering settings: there are no limit or start/stop controls. The changelog says what each release really does.
 
 ## Why
 
@@ -12,6 +12,7 @@ A charger talks to one OCPP backend at a time. Point it at Home Assistant and th
 
 - Accepts the charger on a port you choose and shows its status, power, per-phase current, energy and connection as entities.
 - Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; the vendor's commands are answered by the hub and never reach the charger.
+- Keeps the history of every charge (energy, peak power, duration, tag, stop reason) without limit, and shows the running charge live. See [docs/dashboard.md](docs/dashboard.md) for a ready dashboard.
 - Stays local: no cloud service of ours is involved.
 
 Still to come: a charge limit and start/stop through `number` and `switch` entities. Writing to a charger needs the owner's explicit approval for each kind of write, so it is not built until that is given.
@@ -25,6 +26,12 @@ When the integration stops, the hub drops the charger's connections instead of c
 ## Entities
 
 A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, `_model`, `_firmware`, and `binary_sensor.ocpp_hub_<charger id>_connected`. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+
+## Charge sessions
+
+A charge starts at the charger's `StartTransaction` and ends at its `StopTransaction`. While it runs, `_session_energy` (kWh since the start), `_session_started` and `_session_duration` show it; when it ends they clear. `_last_session` holds the end time of the latest finished charge, with its energy, duration, peak power, tag and stop reason as attributes and the 20 newest charges in `recent_sessions`.
+
+Every finished charge is kept in Home Assistant's storage, with no limit (about 300 bytes each), and survives restarts. The service `ocpp_hub.get_sessions` returns the whole history, newest first, optionally for one `charger_id` and limited by `limit`. A charge that was running while Home Assistant restarted is not recorded: the hub does not know its start. The energy of a charge is the meter at the stop minus the meter at the start; if the charger sends no stop reading, the last meter value is used.
 
 ## Vendor mirror
 

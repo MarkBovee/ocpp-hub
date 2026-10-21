@@ -38,7 +38,7 @@ def phase_key(phase: str | None) -> str | None:
 
 # Parse the timestamp of a meter value, falling back to the receive time.
 # Some chargers omit or garble the timestamp; the sample still needs a time to be useful.
-def _timestamp(raw: object, fallback: datetime) -> datetime:
+def parse_timestamp(raw: object, fallback: datetime) -> datetime:
     if isinstance(raw, str):
         try:
             parsed = datetime.fromisoformat(raw)
@@ -67,7 +67,7 @@ def parse_meter_values(payload: dict[str, Any], now: datetime) -> MeterSample | 
     entries = [entry for entry in payload.get("meterValue", []) if isinstance(entry, dict)]
     if not entries:
         return None
-    latest = max(entries, key=lambda entry: _timestamp(entry.get("timestamp"), now))
+    latest = max(entries, key=lambda entry: parse_timestamp(entry.get("timestamp"), now))
     power: dict[str, float] = {}
     currents: dict[str, float] = {}
     voltages: dict[str, float] = {}
@@ -93,7 +93,7 @@ def parse_meter_values(payload: dict[str, Any], now: datetime) -> MeterSample | 
             offered = value if offered is None else max(offered, value)
     total_power = power.get(PHASE_TOTAL, sum(power.values()) if power else None)
     return MeterSample(
-        sampled_at=_timestamp(latest.get("timestamp"), now),
+        sampled_at=parse_timestamp(latest.get("timestamp"), now),
         power_w=total_power,
         energy_wh=energy,
         current_a=currents,
