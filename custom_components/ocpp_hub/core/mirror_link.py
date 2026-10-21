@@ -33,7 +33,7 @@ from .frames import (
     parse_frame,
 )
 from .mirror_commands import TriggerRequest, answer_vendor_call
-from .mirror_forward import FORWARDED, Forward, plan_forward
+from .mirror_forward import FORWARDED, Forward, plan_forward, refusal_for
 from .mirror_model import COMMANDS_FORWARD, MirrorSettings, MirrorStatus
 from .mirror_queue import (
     ACTION_BOOT,
@@ -394,7 +394,7 @@ class MirrorLink:
     ) -> None:
         if len(self._forwards) > MAX_FORWARDS:
             _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
-            await self._send_to_vendor(connection, build_call_result(unique_id, {"status": "Rejected"}))
+            await self._send_to_vendor(connection, build_call_result(unique_id, refusal_for(action)))
             return
         plan = plan_forward(action, payload, self._policy, self._transactions)
         if not isinstance(plan, Forward):
@@ -420,8 +420,8 @@ class MirrorLink:
         _LOGGER.info(
             "[forward] Vendor %s for %s passed on; the charger answered %s", action, self.cp_id, answer.get("status")
         )
-        if action == "ClearChargingProfile" and answer.get("status") == "Accepted" and "id" not in payload:
-            # Clearing without an id removes every profile, the hub's own included.
+        if action == "ClearChargingProfile" and answer.get("status") == "Accepted" and set(payload) - {"id"}:
+            # Clearing without an id, or by filters, can remove the hub's own profile as well.
             self._session.record_limit(None, None)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))
 

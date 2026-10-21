@@ -211,8 +211,9 @@ async def test_a_charger_error_is_passed_back_to_the_vendor(start_rig) -> None:
         ("ClearChargingProfile", {"id": "7001"}, False),
         ("ChangeConfiguration", {"key": "ChargingScheduleAllowedChargingRateUnit", "value": "W"}, False),
         ("ChangeConfiguration", {"key": "LightIntensity ", "value": "50"}, False),
-        ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": 30}, False),
-        ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": "30"}, True),
+        ("ChangeConfiguration", {"key": "ConnectionTimeOut", "value": 30}, False),
+        ("ChangeConfiguration", {"key": "ConnectionTimeOut", "value": "30"}, True),
+        ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": "30"}, False),
         ("DataTransfer", {"vendorId": "v"}, False),
     ],
 )
@@ -220,3 +221,46 @@ def test_the_forwarding_rules(action: str, payload: dict[str, Any], allowed: boo
     plan = plan_forward(action, payload, ControlPolicy(max_current_a=16.0), TransactionIdMap())
 
     assert isinstance(plan, Forward) is allowed and isinstance(plan, Refuse) is not allowed
+
+
+# Intent: commands beyond the four that may wait at once are refused with an answer that is valid for their own action
+# (Unknown for ClearChargingProfile, UnlockFailed for UnlockConnector), and the charger sees only the first four.
+# Why: a flood must not hold up the owner's writes, and a strict backend treats an answer outside the protocol's list
+# as an error of the device, not as a refusal.
+@pytest.mark.parametrize(
+    ("action", "payload", "refusal"),
+    [
+        ("ClearChargingProfile", {"id": 5}, {"status": "Unknown"}),
+        ("UnlockConnector", {"connectorId": 1}, {"status": "UnlockFailed"}),
+    ],
+)
+async def test_a_flood_of_commands_is_refused_with_a_valid_answer(
+    start_rig, action: str, payload: dict[str, Any], refusal: dict[str, Any]
+) -> None:
+    rig, charger = await _forwarding_rig(start_rig)
+
+    asked = [asyncio.create_task(rig.vendor.command(action, payload, timeout=5.0)) for _ in range(7)]
+    refused = [answer for answer in await asyncio.gather(*asked[4:]) if answer[0] == 3]
+
+    assert len(refused) == 3 and all(answer[2] == refusal for answer in refused)
+    assert charger.hub_calls.qsize() <= 4
+
+
+# Intent: a profile with a limit too big to be a number, a profile id that is not an integer, and an accepted clear with
+# filters are all handled: the first two are refused, the third forgets the hub's limit.
+# Why: a 400-digit number made the check raise and left the vendor without an answer, a string id could be coerced by a
+# lenient firmware into the hub's own id, and a clear by filter can remove the hub's profile as well.
+def test_odd_numbers_and_ids_in_profiles_are_refused() -> None:
+    big = _profile(unit="A", limit=10)
+    big["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"] = 10**400
+    textual_id = _profile(unit="A", limit=10)
+    textual_id["chargingProfileId"] = "7001"
+
+    for profile in (big, textual_id):
+        plan = plan_forward(
+            "SetChargingProfile",
+            {"connectorId": 1, "csChargingProfiles": profile},
+            ControlPolicy(max_current_a=16.0),
+            TransactionIdMap(),
+        )
+        assert isinstance(plan, Refuse)

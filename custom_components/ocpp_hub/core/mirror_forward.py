@@ -27,19 +27,16 @@ FORWARDED = frozenset(
 )
 
 # The configuration keys the vendor may change: standard OCPP 1.6 keys that touch neither the connection, nor how the
-# charger authenticates, nor metering, nor how a charging profile is read. Everything else is refused, because a key
+# charger authenticates, nor what or how often it reports (so no heartbeat, aligned-data or status-duration keys),
+# nor how a charging profile is read. Everything else is refused, because a key
 # that is not on a list cannot be judged: a vendor-specific key may set a maximum current. Compared in lower case
 # and exactly, so a key with a stray space does not pass.
 _ALLOWED_KEYS = frozenset(
     key.lower()
     for key in (
-        "HeartbeatInterval",
         "ConnectionTimeOut",
         "LightIntensity",
         "BlinkRepeat",
-        "ClockAlignedDataInterval",
-        "MeterValuesAlignedData",
-        "MinimumStatusDuration",
         "ResetRetries",
         "StopTransactionOnEVSideDisconnect",
         "StopTransactionOnInvalidId",
@@ -57,6 +54,8 @@ _ALLOWED_KEYS = frozenset(
 _MAX_VALUE = 500
 # The most periods a profile may have, and the voltage a profile in watts is measured against.
 _MAX_PERIODS = 24
+# No charger takes a limit this large in watts; anything above is refused before it is converted or compared.
+_MAX_LIMIT = 1.0e9
 _NOMINAL_VOLTS = 230.0
 _DEFAULT_PHASES = 3
 
@@ -99,9 +98,10 @@ def plan_forward(
             return Forward(action, payload)
 
 
-# The refusal answer a command uses when the mirror says no.
-def _refusal(action: str) -> dict[str, Any]:
-    return {"status": "UnlockFailed" if action == "UnlockConnector" else "Rejected"}
+# The refusal answer a command uses when the mirror says no: a status the protocol allows for that very command.
+def refusal_for(action: str) -> dict[str, Any]:
+    statuses = {"UnlockConnector": "UnlockFailed", "ClearChargingProfile": "Unknown"}
+    return {"status": statuses.get(action, "Rejected")}
 
 
 # Why a charging profile may not be passed on, or None when it may. It needs a schedule in exactly amperes or watts with
@@ -114,6 +114,8 @@ def _profile_problem(profile: object, policy: ControlPolicy) -> str | None:
         return "the profile has no schedule"
     if len(periods) > _MAX_PERIODS:
         return "the profile has too many periods"
+    if not is_integer(profile.get("chargingProfileId")):
+        return "the profile id is not a number"
     if profile.get("chargingProfileId") == HUB_PROFILE_ID:
         return "the profile id belongs to the hub"
     unit = schedule.get("chargingRateUnit")
@@ -121,7 +123,9 @@ def _profile_problem(profile: object, policy: ControlPolicy) -> str | None:
         return "the schedule names no unit of A or W"
     for period in periods:
         limit = period.get("limit") if isinstance(period, dict) else None
-        if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit < 0:
+        if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit < 0 or limit > _MAX_LIMIT:
+            return "a period has no usable limit"
+        if not math.isfinite(limit):
             return "a period has no usable limit"
         phases = period.get("numberPhases", _DEFAULT_PHASES)
         if isinstance(phases, bool) or not isinstance(phases, int) or not 1 <= phases <= _DEFAULT_PHASES:
@@ -138,13 +142,13 @@ def _plan_profile(payload: dict[str, Any], policy: ControlPolicy, transactions: 
     profile = payload.get("csChargingProfiles")
     problem = _profile_problem(profile, policy)
     if problem is not None or not isinstance(profile, dict):
-        return Refuse(_refusal("SetChargingProfile"), problem or "the profile is missing")
+        return Refuse(refusal_for("SetChargingProfile"), problem or "the profile is missing")
     forwarded = dict(payload)
     vendor_transaction = profile.get("transactionId")
     if vendor_transaction is not None:
         hub_transaction = transactions.to_hub(vendor_transaction) if is_integer(vendor_transaction) else None
         if hub_transaction is None:
-            return Refuse(_refusal("SetChargingProfile"), "the profile names a transaction the hub does not know")
+            return Refuse(refusal_for("SetChargingProfile"), "the profile names a transaction the hub does not know")
         forwarded["csChargingProfiles"] = {**profile, "transactionId": hub_transaction}
     return Forward("SetChargingProfile", forwarded)
 
@@ -159,7 +163,7 @@ def _plan_start(payload: dict[str, Any], policy: ControlPolicy) -> Forward | Ref
     if problem is None and isinstance(profile, dict) and profile.get("transactionId") is not None:
         problem = "the profile names a transaction that has not started"
     if problem is not None:
-        return Refuse(_refusal("RemoteStartTransaction"), problem)
+        return Refuse(refusal_for("RemoteStartTransaction"), problem)
     return Forward("RemoteStartTransaction", payload)
 
 
@@ -179,7 +183,7 @@ def _plan_stop(payload: dict[str, Any], transactions: TransactionIdMap) -> Forwa
     vendor_transaction = payload.get("transactionId")
     hub_transaction = transactions.to_hub(vendor_transaction) if is_integer(vendor_transaction) else None
     if hub_transaction is None:
-        return Refuse(_refusal("RemoteStopTransaction"), "the transaction is not one the hub knows")
+        return Refuse(refusal_for("RemoteStopTransaction"), "the transaction is not one the hub knows")
     return Forward("RemoteStopTransaction", {**payload, "transactionId": hub_transaction})
 
 
@@ -187,7 +191,7 @@ def _plan_stop(payload: dict[str, Any], transactions: TransactionIdMap) -> Forwa
 def _plan_configuration(payload: dict[str, Any]) -> Forward | Refuse:
     key, value = payload.get("key"), payload.get("value")
     if not isinstance(key, str) or key.lower() not in _ALLOWED_KEYS:
-        return Refuse(_refusal("ChangeConfiguration"), "the key is not one the hub lets the vendor change")
+        return Refuse(refusal_for("ChangeConfiguration"), "the key is not one the hub lets the vendor change")
     if not isinstance(value, str) or len(value) > _MAX_VALUE:
-        return Refuse(_refusal("ChangeConfiguration"), "the value is not a short text")
+        return Refuse(refusal_for("ChangeConfiguration"), "the value is not a short text")
     return Forward("ChangeConfiguration", payload)
