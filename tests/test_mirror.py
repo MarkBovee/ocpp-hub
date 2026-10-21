@@ -8,14 +8,10 @@ import logging
 import shutil
 import ssl
 import subprocess
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-from ocpp_hub_core.mirror import VendorMirror
-from ocpp_hub_core.mirror_model import MirrorSettings
 
 from tests.fake_vendor import FakeVendor, eventually
 
@@ -23,57 +19,6 @@ CHARGER = "TEST0001"
 METER_VALUE = [
     {"timestamp": "2026-10-20T18:00:00Z", "sampledValue": [{"measurand": "Power.Active.Import", "value": "7"}]}
 ]
-
-
-@dataclass
-class Rig:
-    """A hub with a mirror in front of a fake vendor backend."""
-
-    hub: Any
-    mirror: VendorMirror
-    vendor: FakeVendor
-
-
-# Intent: factory fixture that starts a mirror with test-friendly timings.
-# Why: reconnect and timeout tests would otherwise wait for the production delays of seconds.
-@pytest.fixture
-async def start_mirror() -> AsyncIterator[Callable[..., Awaitable[VendorMirror]]]:
-    mirrors: list[VendorMirror] = []
-
-    # Intent: start one mirror for a vendor URL with the given overrides.
-    # Why: most tests differ in one or two settings only.
-    async def _start(url: str, ssl_context: ssl.SSLContext | None = None, **overrides: Any) -> VendorMirror:
-        defaults = {"backoff_min_s": 0.05, "backoff_max_s": 0.2, "reply_timeout_s": 2.0, "connect_timeout_s": 2.0}
-        mirror = VendorMirror(MirrorSettings(url=url, **{**defaults, **overrides}), ssl_context)
-        await mirror.start()
-        mirrors.append(mirror)
-        return mirror
-
-    yield _start
-    for mirror in mirrors:
-        await mirror.stop()
-
-
-# Intent: factory fixture that wires a hub, a mirror and a fake vendor together.
-# Why: every mirror test needs the same three parts; only the vendor behaviour and the mirror settings vary.
-@pytest.fixture
-async def start_rig(start_hub: Any, start_mirror: Any) -> AsyncIterator[Callable[..., Awaitable[Rig]]]:
-    vendors: list[FakeVendor] = []
-
-    # Intent: build one rig, optionally around a prepared vendor.
-    # Why: tests that need a stalled or restarting vendor create it first and hand it in.
-    async def _start(
-        vendor: FakeVendor | None = None, hub: dict[str, Any] | None = None, **mirror_overrides: Any
-    ) -> Rig:
-        fake = vendor or FakeVendor()
-        await fake.start()
-        vendors.append(fake)
-        mirror = await start_mirror(fake.url, **mirror_overrides)
-        return Rig(await start_hub(mirror, **(hub or {})), mirror, fake)
-
-    yield _start
-    for fake in vendors:
-        await fake.stop()
 
 
 # Intent: everything the charger asks the hub reaches the vendor in order, except its heartbeats.

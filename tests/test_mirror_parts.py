@@ -212,7 +212,7 @@ def test_trigger_message_answers(payload: dict[str, Any], can: bool, expected: o
         ({"url": "wss://user:secret@vendor.example/ocpp"}, "credentials_in_url"),
         ({"user": "only-a-user"}, "credentials_incomplete"),
         ({"password": "only-a-password"}, "credentials_incomplete"),
-        ({"commands": "forward"}, "invalid_settings"),
+        ({"commands": "everything"}, "invalid_settings"),
         ({"max_queue": 0}, "invalid_settings"),
         ({"reply_timeout_s": 0.0}, "invalid_settings"),
         ({"backoff_min_s": 5.0, "backoff_max_s": 1.0}, "invalid_settings"),

@@ -7,12 +7,13 @@ from typing import Any
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ocpp_hub.const import (
     CONF_MAX_CURRENT,
     CONF_PORT,
+    CONF_VENDOR_COMMANDS,
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
     CONF_VENDOR_USER,
@@ -68,6 +69,7 @@ async def test_options_are_stored(hass: HomeAssistant) -> None:
         CONF_VENDOR_URL: "wss://vendor.example:8443/ocpp",
         CONF_VENDOR_USER: "mirror",
         CONF_VENDOR_PASSWORD: "s3cret",
+        CONF_VENDOR_COMMANDS: "reject",
         CONF_MAX_CURRENT: 16,
     }
 
@@ -115,7 +117,12 @@ async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {**stored, CONF_VENDOR_URL: "wss://old.example/v2/ocpp", CONF_MAX_CURRENT: 16}
+    assert entry.options == {
+        **stored,
+        CONF_VENDOR_URL: "wss://old.example/v2/ocpp",
+        CONF_VENDOR_COMMANDS: "reject",
+        CONF_MAX_CURRENT: 16,
+    }
     assert suggested == {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: "mirror"}
 
 
@@ -156,4 +163,22 @@ async def test_clearing_the_user_drops_the_stored_password(hass: HomeAssistant) 
     result = await _submit(hass, entry, {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_VENDOR_USER: ""})
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_VENDOR_URL: "wss://old.example/ocpp", CONF_MAX_CURRENT: 16}
+    assert entry.options == {
+        CONF_VENDOR_URL: "wss://old.example/ocpp",
+        CONF_VENDOR_COMMANDS: "reject",
+        CONF_MAX_CURRENT: 16,
+    }
+
+
+# Intent: forwarding the vendor's commands is stored when chosen, and an unknown policy is refused.
+# Why: forwarding hands the manufacturer a hand on the charger; it must be an explicit choice that survives a reload,
+# and a value outside the two policies must never be stored.
+async def test_forwarding_is_stored_only_when_chosen(hass: HomeAssistant) -> None:
+    entry = _entry(hass)
+
+    result = await _submit(hass, entry, {CONF_VENDOR_URL: "wss://vendor.example/ocpp", CONF_VENDOR_COMMANDS: "forward"})
+    with pytest.raises(InvalidData):
+        await _submit(hass, entry, {CONF_VENDOR_URL: "wss://vendor.example/ocpp", CONF_VENDOR_COMMANDS: "everything"})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_VENDOR_COMMANDS] == "forward"

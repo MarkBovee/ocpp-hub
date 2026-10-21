@@ -169,3 +169,68 @@ def test_a_policy_with_an_impossible_ceiling_is_refused() -> None:
         with pytest.raises(ValueError):
             ControlPolicy(max_current_a=bad)
     assert effective_current_a(16, ControlPolicy(max_current_a=16.0)) == 16.0
+
+
+# Intent: while a charge runs, a charger that refuses the station profile and the charge profile but accepts a default
+# profile is reported as refused, and a default profile learned while idle does not take the place of a charge profile.
+# Why: a default profile only applies to charges that start later; calling it a success would show a limit or a pause
+# that the running charge never got.
+async def test_a_default_profile_never_counts_for_a_running_charge(start_hub) -> None:
+    hub, charger, control = await _control(start_hub)
+    idle = asyncio.create_task(control.set_current_limit(10))
+    await _answer_with(charger, "Rejected", "Accepted")
+    await idle
+    assert hub.listener.latest.limit_purpose == "TxDefaultProfile"
+    await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+
+    running = asyncio.create_task(control.set_current_limit(8))
+    seen = await _answer_with(charger, "Rejected", "Rejected")
+    with pytest.raises(ControlError):
+        await running
+
+    assert [c[3]["csChargingProfiles"]["chargingProfilePurpose"] for c in seen] == [
+        "ChargePointMaxProfile",
+        "TxProfile",
+    ]
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(charger.next_hub_call(), 0.2)
+    assert hub.listener.latest.charge_limit_a == 10.0
+
+
+# Intent: a limit the charger accepted as a charge profile is forgotten when that charge stops.
+# Why: a charge profile ends with its charge; the next charge would run unlimited while the number still showed a limit.
+async def test_a_charge_profile_limit_ends_with_the_charge(start_hub) -> None:
+    hub, charger, control = await _control(start_hub)
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-10-21T08:00:00Z"}
+    )
+    limit = asyncio.create_task(control.set_current_limit(10))
+    await _answer_with(charger, "Rejected", "Accepted")
+    await limit
+    assert hub.listener.latest.limit_purpose == "TxProfile"
+
+    await charger.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 100, "timestamp": "2026-10-21T09:00:00Z"},
+    )
+
+    assert hub.listener.latest.charge_limit_a is None and hub.listener.latest.limit_purpose is None
+
+
+# Intent: a station-wide limit the hub set is still shown after the charger reconnects.
+# Why: the charger keeps a station profile across a dropped link, so a pause must stay visible instead of showing
+# "unknown" while no car charges; a charge profile died with its charge.
+async def test_a_station_limit_is_still_shown_after_a_reconnect(start_hub) -> None:
+    hub, charger, control = await _control(start_hub)
+    limit = asyncio.create_task(control.set_current_limit(0))
+    await _answer_with(charger, "Accepted")
+    await limit
+
+    await charger.close()
+    await charger.wait_closed()
+    again = await hub.charger()
+    await again.boot()
+
+    assert hub.listener.latest.charge_limit_a == 0.0 and hub.listener.latest.limit_purpose == "ChargePointMaxProfile"

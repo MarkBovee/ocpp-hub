@@ -8,8 +8,11 @@ from urllib.parse import urlsplit
 
 from .frames import basic_auth_header
 
-# The only command policy so far: whatever the vendor backend asks of the charger is refused.
+# What happens to the vendor backend's commands: refused (the default), or the ones in mirror_forward.FORWARDED passed
+# on to the charger, under the owner's current ceiling.
 COMMANDS_REJECT = "reject"
+COMMANDS_FORWARD = "forward"
+COMMAND_POLICIES = (COMMANDS_REJECT, COMMANDS_FORWARD)
 
 
 class MirrorSettingsError(ValueError):
@@ -54,9 +57,9 @@ class MirrorSettings:
             )
         if bool(self.user) != bool(self.password):
             raise MirrorSettingsError("credentials_incomplete", "set both the vendor user and password, or neither")
-        if self.commands != COMMANDS_REJECT:
+        if self.commands not in COMMAND_POLICIES:
             raise MirrorSettingsError(
-                "invalid_settings", f"unsupported command policy {self.commands!r}; only {COMMANDS_REJECT!r} exists"
+                "invalid_settings", f"unsupported command policy {self.commands!r}; use one of {COMMAND_POLICIES}"
             )
         if self.max_queue < 1 or self.fallback_heartbeat_s < 1:
             raise MirrorSettingsError(

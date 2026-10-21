@@ -11,7 +11,7 @@ A charger talks to one OCPP backend at a time. Point it at Home Assistant and th
 ## What it does
 
 - Accepts the charger on a port you choose and shows its status, power, per-phase current, energy and connection as entities.
-- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; the vendor's commands are answered by the hub and never reach the charger.
+- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; by default the vendor's commands are refused by the hub and never reach the charger; you can choose to pass them on (see below).
 - Keeps the history of every charge (energy, peak power, duration, tag, stop reason) without limit, and shows the running charge live. See [docs/dashboard.md](docs/dashboard.md) for a ready dashboard.
 - Stays local: no cloud service of ours is involved.
 
@@ -54,7 +54,8 @@ What the mirror does and does not do:
 
 - It forwards every request of the charger except its heartbeats, in order, one at a time, and sends heartbeats of its own at the interval the vendor asks for. When the vendor is unreachable it keeps the frames in a queue of up to 5000 (only meter values and status changes are dropped when it is full) and delivers them in order when the link is back.
 - Transaction ids differ between the hub and the vendor; the mirror translates them. A stop for a transaction the vendor never confirmed is not sent.
-- Every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
+- By default every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
+- With *Commands from the backend* set to *Pass them on to the charger*, the vendor's `RemoteStartTransaction`, `RemoteStopTransaction`, `SetChargingProfile`, `ClearChargingProfile`, `ChangeConfiguration`, `ChangeAvailability`, `UnlockConnector` and `DataTransfer` go to the charger, and its answer goes back to the vendor. Limits stay: a charging profile above your current ceiling (or reusing the hub's profile id) is refused, so is a stop of a transaction the hub does not know, and so is a configuration key that could move the charger to another backend or change how it authenticates (anything with url, host, server, authorization, security, password and so on), or one of the two metering keys. `Reset`, `UpdateFirmware` and `GetDiagnostics` are refused in every setting. Every passed-on or refused command is logged with the prefix `[forward]`. A profile from the vendor sits next to the one the hub sets, and the charger applies the lower limit, so the charge limit number does not show what the vendor set.
 - The queue and the transaction ids live in memory. If Home Assistant restarts while a charge is running, that session stays open at the vendor, and its meter values go without a transaction id.
 
 ## Install

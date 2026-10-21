@@ -25,13 +25,15 @@
           "vendor_url": "Adres van de backend",
           "vendor_user": "Gebruikersnaam",
           "vendor_password": "Wachtwoord",
-          "max_current": "Hoogste stroom (A)"
+          "max_current": "Hoogste stroom (A)",
+          "vendor_commands": "Commando's van de backend"
         },
         "data_description": {
           "vendor_url": "Begint met ws:// of wss:// en bevat de host, de poort en het pad van de OCPP-backend van de fabrikant, zonder het serienummer van de laadpaal en zonder inloggegevens.",
           "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
           "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft.",
-          "max_current": "De hoogste stroom per fase die de hub aan de lader mag vragen. Houd hem onder de limiet van de installateur. Een waarde onder 6 A bij de laadlimiet pauzeert de lader."
+          "max_current": "De hoogste stroom per fase die de hub aan de lader mag vragen. Houd hem onder de limiet van de installateur. Een waarde onder 6 A bij de laadlimiet pauzeert de lader.",
+          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, instellingen wijzigen en laadprofielen zetten op de lader, binnen de stroomgrens hieronder; Reset, firmware en diagnostics blijven geweigerd."
         }
       }
     },
@@ -117,6 +119,11 @@
       "charging": {
         "name": "Laden"
       }
+    },
+    "button": {
+      "clear_charge_limit": {
+        "name": "Laadlimiet wissen"
+      }
     }
   },
   "exceptions": {
@@ -167,6 +174,14 @@
           "name": "Limiet",
           "description": "Geef maximaal zoveel van de nieuwste sessies terug."
         }
+      }
+    }
+  },
+  "selector": {
+    "vendor_commands": {
+      "options": {
+        "reject": "Weigeren (alleen-lezen mirror)",
+        "forward": "Doorlaten naar de lader"
       }
     }
   }

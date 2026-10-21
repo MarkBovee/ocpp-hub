@@ -23,14 +23,19 @@ SOCKET_CONNECTOR = 1
 STATION_CONNECTOR = 0
 
 
+# Text from a charger, made safe to put in a log line or a message: printable, one line, and short.
+def _plain(value: str, limit: int = 120) -> str:
+    return " ".join("".join(c for c in value if c.isprintable() or c.isspace()).split())[:limit]
+
+
 class ControlError(Exception):
     """A write was refused or failed. `code` is a stable key for translations, `detail` has the numbers."""
 
     # Keep the stable code and a human detail.
     def __init__(self, code: str, detail: str = "") -> None:
-        super().__init__(f"{code}: {detail}" if detail else code)
+        super().__init__(f"{code}: {_plain(detail)}" if detail else code)
         self.code = code
-        self.detail = detail
+        self.detail = _plain(detail)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,14 +51,18 @@ class ControlPolicy:
             raise ValueError(f"max_current_a must be between {CHARGING_MIN_A:g} and 80, got {self.max_current_a!r}")
 
 
-# The profile purposes to try for a limit, best first: a station-wide ceiling covers a running charge and every later
-# one; the per-charge profiles are the fallback for a charger that refuses it. A charge that is running needs a
-# TxProfile, because a TxDefaultProfile only applies to charges that start later.
+# The profile purposes to try for a limit, best first. A station-wide ceiling covers a running charge and every later
+# one. The per-charge profiles are the fallback for a charger that refuses it, and only the one that fits the moment
+# counts: a charge that runs needs a TxProfile, because a TxDefaultProfile only applies to charges that start later and
+# its "Accepted" would say nothing about the charge in progress. The purpose learned earlier goes first, but only among
+# those.
 def _purposes(transaction_id: int | None, learned: str | None) -> list[tuple[str, int]]:
     ladder = [(commands.PURPOSE_CHARGE_POINT_MAX, STATION_CONNECTOR)]
-    if transaction_id is not None:
-        ladder.append((commands.PURPOSE_TX, SOCKET_CONNECTOR))
-    ladder.append((commands.PURPOSE_TX_DEFAULT, SOCKET_CONNECTOR))
+    ladder.append(
+        (commands.PURPOSE_TX, SOCKET_CONNECTOR)
+        if transaction_id is not None
+        else (commands.PURPOSE_TX_DEFAULT, SOCKET_CONNECTOR)
+    )
     if learned is not None:
         ladder.sort(key=lambda step: step[0] != learned)
     return ladder
@@ -144,8 +153,9 @@ class ChargerControl:
         try:
             answer = await self._session.call(action, payload)
         except CallRejectedError as error:
-            return error.code
+            return _plain(error.code, 40)
         except CallError as error:
+            # A timeout does not say the charger ignored the request: it may have applied the limit and answered late.
             raise ControlError("unreachable", str(error)) from error
         status = answer.get("status")
-        return status if isinstance(status, str) else "NoStatus"
+        return _plain(status, 40) if isinstance(status, str) else "NoStatus"

@@ -96,3 +96,20 @@ async def test_the_charging_switch_starts_and_stops_a_charge(
 
     assert request[2] == "RemoteStartTransaction" and request[3] == {"idTag": "OCPPHUB", "connectorId": 1}
     assert stop[2] == "RemoteStopTransaction" and stop[3] == {"transactionId": started[2]["transactionId"]}
+
+
+# Intent: the clear button removes the hub's profile from the charger and the number goes back to showing nothing.
+# Why: it is the owner's way out of a pause the hub set; without it only setting 6 A or more would lift the pause.
+async def test_the_clear_button_removes_the_hub_profile(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger = await _booted(hass, setup_hub, connect_charger)
+    await _call_and_answer(hass, charger, "number", "set_value", {"entity_id": LIMIT, "value": 0})
+    await wait_for(hass, lambda: state_of(hass, LIMIT) == "0.0", "pause not shown")
+
+    request = await _call_and_answer(
+        hass, charger, "button", "press", {"entity_id": "button.ocpp_hub_test0001_clear_charge_limit"}
+    )
+    await wait_for(hass, lambda: state_of(hass, LIMIT) == "unknown", "limit not cleared")
+
+    assert request[2] == "ClearChargingProfile" and request[3] == {"id": 7001}
