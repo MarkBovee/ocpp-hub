@@ -425,19 +425,35 @@ class ChargerSession:
                 return
         _LOGGER.warning("Giving up on the setup of charger %s until its next boot", self.cp_id)
 
-    # Read the configuration keys that decide what the hub can do and store them in the snapshot.
-    # SupportedFeatureProfiles tells whether smart charging is offered at all. Only the keys asked for are kept: some
-    # chargers answer with every key they have, and the snapshot is shown in diagnostics and to the vendor.
+    # Read the configuration keys that decide what the hub can do and store them in the snapshot, one key per request.
+    # The Raedian NEO never answered a request that names several keys; it answers each key on its own, which is also
+    # how the reference implementation asks. SupportedFeatureProfiles tells whether smart charging is offered at all.
+    # Only the keys asked for are kept: some chargers answer with every key they have, and the snapshot is shown in
+    # diagnostics and to the vendor. A key that gets no answer is skipped; when no key was answered at all, the last
+    # error goes up so the whole setup is tried again later.
     async def _read_configuration(self) -> None:
-        answer = await self.call("GetConfiguration", commands.get_configuration(CONFIG_KEYS))
-        configuration = {
-            str(item["key"]): str(item.get("value", ""))
-            for item in answer.get("configurationKey", [])
-            if isinstance(item, dict) and item.get("key") in CONFIG_KEYS
-        }
-        profiles = configuration.get("SupportedFeatureProfiles", "")
-        features = frozenset(part.strip() for part in profiles.split(",") if part.strip())
-        self._update(configuration=configuration, features=features)
+        failure: CallError | None = None
+        answered = 0
+        for key in CONFIG_KEYS:
+            try:
+                answer = await self.call("GetConfiguration", commands.get_configuration([key]))
+            except CallError as error:
+                failure = error
+                continue
+            answered += 1
+            for item in answer.get("configurationKey", []):
+                if isinstance(item, dict) and item.get("key") == key:
+                    self._store_configuration(key, str(item.get("value", "")))
+        if failure is not None and answered == 0:
+            raise failure
+
+    # Add one configuration value to the snapshot, and the feature profiles it implies.
+    # Updating per key means a charger that answers only some keys still shows what it said.
+    def _store_configuration(self, key: str, value: str) -> None:
+        changes: dict[str, Any] = {"configuration": {**self._snapshot.configuration, key: value}}
+        if key == "SupportedFeatureProfiles":
+            changes["features"] = frozenset(part.strip() for part in value.split(",") if part.strip())
+        self._update(**changes)
 
     # Ask the charger to report the measurands the hub uses, at the configured interval, when it does not already.
     # A charger reports only what it is configured to, and the per-phase current is what load balancing needs.

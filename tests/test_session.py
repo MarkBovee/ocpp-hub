@@ -118,6 +118,24 @@ async def test_bad_requests_get_errors_and_the_link_survives(start_hub) -> None:
     assert alive[0] == 3
 
 
+# Answer the hub's one-key GetConfiguration requests from a table of values, as the NEO does, one request per key.
+# A key the table does not hold is reported as unknown; a key outside the hub's list is added to the first answer so a
+# test can check that only the asked keys are kept.
+async def _answer_configuration(charger, values: dict[str, str], extra: dict[str, str] | None = None) -> list[str]:
+    from ocpp_hub_core.session import CONFIG_KEYS
+
+    asked: list[str] = []
+    for _ in CONFIG_KEYS:
+        request = await charger.next_hub_call()
+        assert request[2] == "GetConfiguration" and len(request[3]["key"]) == 1
+        key = request[3]["key"][0]
+        asked.append(key)
+        found = [{"key": key, "readonly": False, "value": values[key]}] if key in values else []
+        found += [{"key": k, "readonly": False, "value": v} for k, v in (extra or {}).items()] if not asked[1:] else []
+        await charger.answer(request, {"configurationKey": found, **({} if found else {"unknownKey": [key]})})
+    return asked
+
+
 # Intent: after boot the hub reads the configuration, stores the feature profiles and keeps only the asked keys.
 # Why: whether smart charging is offered at all decides if a current limit can ever be set.
 async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> None:
@@ -125,22 +143,19 @@ async def test_post_boot_setup_reads_configuration_and_features(start_hub) -> No
     charger = await hub.charger()
     await charger.boot()
 
-    request = await charger.next_hub_call()
-    await charger.answer(
-        request,
+    asked = await _answer_configuration(
+        charger,
         {
-            "configurationKey": [
-                {"key": "SupportedFeatureProfiles", "readonly": True, "value": "Core,FirmwareManagement,SmartCharging"},
-                {"key": "MeterValuesSampledData", "readonly": False, "value": "Energy.Active.Import.Register"},
-                {"key": "MeterValueSampleInterval", "readonly": False, "value": "15"},
-                {"key": "AuthorizationKey", "readonly": False, "value": "not-asked-for"},
-            ]
+            "SupportedFeatureProfiles": "Core,FirmwareManagement,SmartCharging",
+            "MeterValuesSampledData": "Energy.Active.Import.Register",
+            "MeterValueSampleInterval": "15",
         },
+        extra={"AuthorizationKey": "not-asked-for"},
     )
     change = await charger.next_hub_call()
     await charger.answer(change, {"status": "Accepted"})
 
-    assert request[2] == "GetConfiguration" and "SupportedFeatureProfiles" in request[3]["key"]
+    assert asked[0] == "SupportedFeatureProfiles" and "MeterValuesSampledData" in asked
     assert change[2] == "ChangeConfiguration" and change[3]["key"] == "MeterValuesSampledData"
     assert "Current.Import" in change[3]["value"]
     await asyncio.sleep(0.05)
@@ -158,16 +173,10 @@ async def test_matching_metering_settings_are_left_alone(start_hub) -> None:
     hub = await start_hub(setup_delay_s=0.0)
     charger = await hub.charger()
     await charger.boot()
-    request = await charger.next_hub_call()
 
-    await charger.answer(
-        request,
-        {
-            "configurationKey": [
-                {"key": "MeterValuesSampledData", "readonly": False, "value": wanted.measurands},
-                {"key": "MeterValueSampleInterval", "readonly": False, "value": str(wanted.meter_sample_interval_s)},
-            ]
-        },
+    await _answer_configuration(
+        charger,
+        {"MeterValuesSampledData": wanted.measurands, "MeterValueSampleInterval": str(wanted.meter_sample_interval_s)},
     )
 
     with pytest.raises(TimeoutError):
