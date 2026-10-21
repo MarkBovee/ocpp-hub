@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from homeassistant.components import persistent_notification
@@ -25,6 +26,14 @@ _LOGGER = logging.getLogger(__name__)
 # Entities are created from then on, so the device carries the model and firmware from the start.
 def _has_booted(snapshot: ChargerSnapshot) -> bool:
     return snapshot.info.vendor is not None or snapshot.info.model is not None
+
+
+# A string a charger supplied, made safe to show in a notification.
+# Vendor, model and firmware come from a device on the network, and the notification is rendered as Markdown, so the
+# text is cut to one short line without backticks and put in a code span, where Markdown shows it as it is.
+def _as_code(value: str | None) -> str:
+    text = re.sub(r"[`\s]+", " ", value or "").strip()[:64]
+    return f"`{text or '-'}`"
 
 
 class HubListener:
@@ -58,7 +67,7 @@ class HubListener:
         if snapshot.cp_id not in self._announced and _has_booted(snapshot):
             self._announced.add(snapshot.cp_id)
             _LOGGER.info(
-                "[build %s] Charger %s booted: %s %s, firmware %s",
+                "[build %s] Charger %s booted: %r %r, firmware %r",
                 self._build,
                 snapshot.cp_id,
                 snapshot.info.vendor,
@@ -82,11 +91,11 @@ class HubListener:
 
         info = snapshot.info
         message = text("charger_connected").format(
-            vendor=info.vendor or "-",
-            model=info.model or "-",
-            firmware=info.firmware or "-",
-            serial=info.serial or snapshot.cp_id,
-            protocol=snapshot.protocol or "-",
+            vendor=_as_code(info.vendor),
+            model=_as_code(info.model),
+            firmware=_as_code(info.firmware),
+            serial=_as_code(info.serial or snapshot.cp_id),
+            protocol=_as_code(snapshot.protocol),
             mirror=text("charger_connected_mirror_on" if self._mirror_enabled else "charger_connected_mirror_off"),
         )
         persistent_notification.async_create(

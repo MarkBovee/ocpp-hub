@@ -144,6 +144,10 @@ class ChargerSession:
         self._pending: dict[str, asyncio.Future[Frame]] = {}
         self._call_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
+        # The setup that is running for this connection, so another boot does not start a second one.
+        self._setup_task: asyncio.Task[None] | None = None
+        # Metering settings the charger rejected on this connection; they are not offered again.
+        self._rejected_keys: set[str] = set()
         self._snapshot = ChargerSnapshot(cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock())
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "BootNotification": self._boot_notification,
@@ -214,6 +218,8 @@ class ChargerSession:
                 frame = await asyncio.wait_for(future, timeout or self._settings.call_timeout_s)
             except TimeoutError:
                 raise CallTimeoutError(f"{action} was not answered") from None
+            except ConnectionClosed as error:
+                raise CallError(f"{action} could not be sent: the connection closed") from error
             finally:
                 self._pending.pop(unique_id, None)
         if frame[0] == MSG_CALL_ERROR:
@@ -300,7 +306,8 @@ class ChargerSession:
             firmware=payload.get("firmwareVersion"),
         )
         self._update(info=info)
-        self._start_task(self._post_boot_setup())
+        if self._setup_task is None or self._setup_task.done():
+            self._setup_task = self._start_task(self._post_boot_setup())
         return {"status": "Accepted", "currentTime": self._now_iso(), "interval": self._settings.heartbeat_interval_s}
 
     # Answer a heartbeat with the hub's time.
@@ -376,10 +383,11 @@ class ChargerSession:
 
     # Run a coroutine in the background for as long as the connection lives.
     # Tasks are cancelled when the connection ends, so none can outlive its session.
-    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.get_running_loop().create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     # Whether the charger has said who it is, in a BootNotification.
     def _has_booted(self) -> bool:
@@ -471,8 +479,12 @@ class ChargerSession:
             "MeterValueSampleInterval": str(self._settings.meter_sample_interval_s),
         }
         for key, value in wanted.items():
+            if key in self._rejected_keys:
+                continue
             if key in self._snapshot.configuration and self._snapshot.configuration[key] != value:
                 answer = await self.call("ChangeConfiguration", commands.change_configuration(key, value))
                 _LOGGER.info("Charger %s: %s set to %s, answer %s", self.cp_id, key, value, answer.get("status"))
                 if answer.get("status") in ("Accepted", "RebootRequired"):
                     self._update(configuration={**self._snapshot.configuration, key: value})
+                else:
+                    self._rejected_keys.add(key)

@@ -292,3 +292,51 @@ async def test_stopping_the_hub_drops_chargers_without_a_closing_handshake(start
 
     assert charger.close_code == 1006
     assert hub.listener.disconnected == ["TEST0001"] and hub.listener.latest.connected is False
+
+
+# Answer every request the hub sends until the charger has been quiet for a moment, as a charger that knows no key and
+# accepts everything would; the requests are returned in the order they came.
+async def _serve_hub_calls(charger, statuses: dict[str, str] | None = None) -> list[list]:
+    seen: list[list] = []
+    while True:
+        try:
+            request = await charger.next_hub_call(timeout=0.4)
+        except TimeoutError:
+            return seen
+        seen.append(request)
+        if request[2] == "GetConfiguration":
+            key = request[3]["key"][0]
+            value = {"MeterValuesSampledData": "X"}.get(key)
+            found = [{"key": key, "readonly": False, "value": value}] if value is not None else []
+            await charger.answer(request, {"configurationKey": found, **({} if found else {"unknownKey": [key]})})
+        else:
+            await charger.answer(request, {"status": (statuses or {}).get(request[2], "Accepted")})
+
+
+# Intent: a charger that boots again while its setup is still running does not get a second setup.
+# Why: a setup lives for minutes and asks for seven keys, so a charger in a boot loop would otherwise be flooded.
+async def test_repeated_boots_run_one_setup(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0, setup_retry_delays_s=())
+    charger = await hub.charger()
+
+    for _ in range(5):
+        await charger.boot()
+    seen = await _serve_hub_calls(charger)
+
+    keys = [request[3]["key"][0] for request in seen if request[2] == "GetConfiguration"]
+    assert keys.count("SupportedFeatureProfiles") == 1
+
+
+# Intent: a metering setting the charger rejected is not written again on the same connection.
+# Why: the write is limited to two keys, but a charger that keeps rejecting must not be asked again at every boot.
+async def test_rejected_metering_setting_is_not_written_again(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0, setup_retry_delays_s=())
+    charger = await hub.charger()
+
+    await charger.boot()
+    first = await _serve_hub_calls(charger, {"ChangeConfiguration": "Rejected"})
+    await charger.boot()
+    second = await _serve_hub_calls(charger, {"ChangeConfiguration": "Rejected"})
+
+    writes = [request for request in first + second if request[2] == "ChangeConfiguration"]
+    assert len(writes) == 1

@@ -228,3 +228,23 @@ async def test_failed_setup_releases_the_port_and_the_mirror(hass: HomeAssistant
     assert entry.state is ConfigEntryState.SETUP_ERROR and seen["mirror"] is not None
     with socket.socket() as probe:
         assert probe.connect_ex(("127.0.0.1", seen["port"])) != 0
+
+
+# Intent: the connect notification names the charger, and what the charger supplied is shown as plain text.
+# Why: vendor, model and firmware come from a device on the network, and Markdown from it must not render in the UI.
+async def test_connect_notification_shows_charger_strings_as_plain_text(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    from homeassistant.components import persistent_notification
+
+    entry = await setup_hub()
+    charger: FakeCharger = await connect_charger(entry)
+
+    await charger.boot(chargePointVendor="![x](http://example.invalid/p.png)", chargePointModel="NEO_{0}`\nx")
+    notifications = persistent_notification._async_get_or_create_notifications(hass)
+    await wait_for(hass, lambda: notifications, "no notification")
+
+    notification = next(iter(notifications.values()))
+    assert notification["title"] == "Charger connected"
+    assert "`![x](http://example.invalid/p.png)`" in notification["message"]
+    assert "`NEO_{0} x`" in notification["message"] and "ocpp1.6" in notification["message"]
