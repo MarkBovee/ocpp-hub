@@ -26,6 +26,8 @@ class PlanHandler(Protocol):
 
     def imported(self, cp_id: str, windows: list[PlanWindow]) -> None: ...
 
+    async def planning_switched(self, cp_id: str, on: bool) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PlanWrite:
@@ -77,6 +79,19 @@ def classify(payload: dict[str, Any]) -> PlanWrite | PlanQuery | PlanUnreadable 
         return PlanWrite(raedian.decode_plan(frame.payload), frame.session)
     except raedian.FrameError as error:
         return PlanUnreadable(str(error))
+
+
+# Whether a DataTransfer of the cloud switches the app's planning on (True) or off (False), or None when it does not.
+def planning_switch(payload: dict[str, Any]) -> bool | None:
+    if payload.get("vendorId") != "READIAN" or payload.get("messageId") != "RemoteConfiguration":
+        return None
+    try:
+        frame = raedian.parse_frame(json.loads(payload.get("data") or "")["originalData"])
+    except TypeError, ValueError, KeyError, AttributeError, raedian.FrameError:
+        return None
+    if frame.command != raedian.COMMAND_PLANNING_SWITCH or frame.head != raedian.HEAD_CLOUD:
+        return None
+    return {bytes([raedian.PLANNING_ON]): True, bytes([raedian.PLANNING_OFF]): False}.get(frame.payload)
 
 
 # The DataTransfer answer that carries one protocol frame, in the form the charger uses.

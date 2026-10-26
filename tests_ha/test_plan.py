@@ -114,3 +114,28 @@ async def test_a_limit_written_after_the_plan_empties_the_plan(
     await wait_for(hass, lambda: state_of(hass, PLAN) == "0", "plan not emptied")
 
     assert entry.runtime_data.plans.plan("TEST0001") == []
+
+
+# Intent: when the app switches its planning off the hub's profile is cleared but the plan stays; switching it on writes
+# the profile of the plan again, and the sensor says which of the two it is.
+# Why: with the planning off the charger must charge freely, yet the windows are what the owner set up for later.
+async def test_the_planning_switch_clears_and_restores_the_profile(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger, entry = await _booted(hass, setup_hub, connect_charger)
+    await _call(hass, charger, {"windows": [MONDAY_NOON]})
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "1", "plan not shown")
+    plans = entry.runtime_data.plans
+
+    off = asyncio.create_task(plans.planning_switched("TEST0001", False))
+    cleared = await charger.next_hub_call()
+    await charger.answer(cleared, {"status": "Accepted"})
+    await off
+    on = asyncio.create_task(plans.planning_switched("TEST0001", True))
+    written = await charger.next_hub_call()
+    await charger.answer(written, {"status": "Accepted"})
+    await on
+
+    assert cleared[2] == "ClearChargingProfile" and written[2] == "SetChargingProfile"
+    assert plans.plan("TEST0001") == [PlanWindow(1, 43200, 50400)] and plans.planning_on("TEST0001")
+    assert hass.states.get(PLAN).attributes["planning"] == "on"

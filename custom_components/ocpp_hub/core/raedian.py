@@ -17,6 +17,11 @@ import functools
 from dataclasses import dataclass
 
 COMMAND_PLAN = 0xA7
+# The switch of the planning in the app: the cloud sends one byte, 02 for on and 01 for off. Seen on the wire (two
+# switches each way) but not documented by the vendor.
+COMMAND_PLANNING_SWITCH = 0xB3
+PLANNING_ON = 2
+PLANNING_OFF = 1
 HEAD_CLOUD = 0xFE
 HEAD_CHARGER = 0xAA
 WINDOW_SIZE = 12

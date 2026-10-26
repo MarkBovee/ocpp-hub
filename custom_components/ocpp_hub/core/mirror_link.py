@@ -49,7 +49,16 @@ from .mirror_queue import (
     is_integer,
 )
 from .mirror_rewrite import StartPairing, translate_for_vendor
-from .plan_bridge import PlanHandler, PlanQuery, PlanUnreadable, PlanWrite, classify, plan_answer, write_acknowledged
+from .plan_bridge import (
+    PlanHandler,
+    PlanQuery,
+    PlanUnreadable,
+    PlanWrite,
+    classify,
+    plan_answer,
+    planning_switch,
+    write_acknowledged,
+)
 from .raedian import plan_from_exchange
 from .session import CallError, CallRejectedError, ChargerSession
 from .txid_map import TransactionIdMap
@@ -450,6 +459,16 @@ class MirrorLink:
         if answer.get("status") == "Accepted":
             self._note_accepted(action, plan.payload)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))
+        await self._note_planning_switch(plan.payload, answer)
+
+    # When the app switched its planning on or off and the charger accepted it, tell the plan, which then writes or
+    # clears the profile. This comes after the vendor has its answer, because it talks to the charger again.
+    async def _note_planning_switch(self, request: dict[str, Any], answer: dict[str, Any]) -> None:
+        on = planning_switch(request) if self._plan_handler is not None else None
+        if on is None or answer.get("status") != "Accepted" or self._plan_handler is None:
+            return
+        _LOGGER.info("[plan] The app switched its planning %s for %s", "on" if on else "off", self.cp_id)
+        await self._plan_handler.planning_switched(self.cp_id, on)
 
     # Answer the app's planning from the hub's own plan instead of passing it on. A write is taken over by the plan (and
     # acknowledged only when that worked), a query is answered from the plan, and a message about the planning that the
