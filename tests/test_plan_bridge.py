@@ -79,6 +79,7 @@ class FakePlan:
         self.accept = accept
         self.written: list[list[PlanWindow]] = []
         self.imports: list[list[PlanWindow]] = []
+        self.switches: list[bool] = []
 
     # The plan the hub holds.
     def plan(self, cp_id: str) -> list[PlanWindow] | None:
@@ -91,6 +92,10 @@ class FakePlan:
             self.windows = windows
         return self.accept
 
+    # The app switched its planning on or off.
+    async def planning_switched(self, cp_id: str, on: bool) -> None:
+        self.switches.append(on)
+
     # The hub learned the plan of the charger.
     def imported(self, cp_id: str, windows: list[PlanWindow]) -> None:
         self.imports.append(windows)
@@ -99,10 +104,12 @@ class FakePlan:
 
 # Send a DataTransfer of the cloud through the mirror with the given payload and return the answer frame of the vendor
 # side, while an optional charger answer is given when the message reaches the charger.
-async def _through(rig, charger, payload: bytes, reply: dict[str, object] | None = None) -> list:
+async def _through(
+    rig, charger, payload: bytes, reply: dict[str, object] | None = None, command: int = raedian.COMMAND_PLAN
+) -> list:
     import asyncio
 
-    asked = asyncio.create_task(rig.vendor.command("DataTransfer", _message(payload)))
+    asked = asyncio.create_task(rig.vendor.command("DataTransfer", _message(payload, command)))
     if reply is not None:
         call = await charger.next_hub_call()
         await charger.answer(call, reply)
@@ -205,3 +212,22 @@ async def test_the_planning_is_answered_while_the_queue_is_full(start_rig) -> No
         task.cancel()
 
     assert answered[2]["status"] == "Accepted"
+
+
+# Intent: the app's switch for the planning (command b3, 02 on and 01 off) is passed on to the charger and, once the
+# charger accepted it, told to the plan; any other value is not taken for a switch.
+# Why: the plan has to stop holding the charger outside the windows when the owner switches the planning off.
+async def test_the_planning_switch_of_the_app_reaches_the_plan(start_rig) -> None:
+    rig = await start_rig(commands="forward")
+    plan = FakePlan([MONDAY])
+    rig.mirror._plan_handler = plan
+    charger = await rig.hub.charger()
+    await charger.boot()
+    from tests.fake_vendor import eventually
+
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+
+    for value in (2, 1, 7):
+        await _through(rig, charger, bytes([value]), {"status": "Accepted"}, command=raedian.COMMAND_PLANNING_SWITCH)
+
+    assert plan.switches == [True, False]

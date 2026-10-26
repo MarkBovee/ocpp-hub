@@ -62,22 +62,45 @@ class PlanSync:
             return False
         return True
 
+    # Whether the plan applies to the charger now: the app's switch for the planning (on until the app says otherwise).
+    def planning_on(self, cp_id: str) -> bool:
+        return self._store.planning_on(cp_id)
+
+    # The app switched its planning on or off. The plan is kept either way; off clears the hub's profile so the charger
+    # is no longer held outside the windows, on writes the profile of the plan again.
+    async def planning_switched(self, cp_id: str, on: bool) -> None:
+        self._store.set_planning(cp_id, on)
+        windows = self._store.get(cp_id)
+        if windows:
+            try:
+                await self._apply(cp_id, windows, on)
+            except (ControlError, SchedulePlanError) as error:
+                _LOGGER.warning(
+                    "[plan] Switching the planning %s for %s failed: %s", "on" if on else "off", cp_id, error
+                )
+        async_dispatcher_send(self._hass, plan_signal(self._entry_id, cp_id))
+
     # Set the plan: turn the windows into one recurring profile and write it, then keep the plan. An empty plan clears
     # the hub's profile instead, because a profile of nothing but the outside limit would hold the charger at that limit
     # all week. Raises ControlError or SchedulePlanError when it cannot be written, and keeps the old plan then.
     async def set_plan(self, cp_id: str, windows: list[PlanWindow]) -> None:
+        await self._apply(cp_id, windows, self.planning_on(cp_id))
+        self._keep(cp_id, windows)
+
+    # Write the plan to the charger as a profile, or clear the profile when the planning is off, while the snapshot
+    # guard knows that the write is the plan's own.
+    async def _apply(self, cp_id: str, windows: list[PlanWindow], on: bool) -> None:
         control = self._central.control(cp_id) if self._central is not None else None
         if control is None:
             raise ControlError("not_connected", "the charger is not connected")
         self._writing.add(cp_id)
         try:
-            await self._write(control, windows)
+            await self._write(control, windows if on else [])
         finally:
             self._writing.discard(cp_id)
             session = self._central.session(cp_id) if self._central is not None else None
             if session is not None:
                 self._seen[cp_id] = session.snapshot.profile_writes
-        self._keep(cp_id, windows)
 
     # Write the windows to the charger as one profile, or clear the hub's profile when there are none.
     async def _write(self, control: ChargerControl, windows: list[PlanWindow]) -> None:

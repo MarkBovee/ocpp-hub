@@ -271,10 +271,11 @@ class AppPlanSensor(OcppHubEntity, SensorEntity):
     def extra_state_attributes(self) -> Mapping[str, Any]:
         """The windows with the day, the start and the end; a window that ends before it starts runs overnight."""
         return {
+            "planning": "on" if self._runtime.plans.planning_on(self._cp_id) else "off",
             "windows": [
                 {"day": self._DAYS[day - 1], "from": _clock_text(start), "to": _clock_text(end)}
                 for day, start, end in self._windows() or ()
-            ]
+            ],
         }
 
 

@@ -21,6 +21,7 @@ understands it and acts on it.
 | Command | Request payload | Answer payload | What it is |
 |---------|-----------------|----------------|------------|
 | `a7` | `00` read, or `01 count windows` write | `00 count windows` (read), `00` (write) | The charging plan. **Decoded**, see below. |
+| `b3` | one byte: `02` planning on, `01` planning off | `00` | The switch of the planning in the app. **Decoded** by the hub: off clears its profile, on writes it again. Meaning of the two values inferred from four switches the owner made; the vendor does not document it. |
 | `b0` | 4 bytes little-endian Unix time (UTC), `0d` | the same 4 bytes | Clock sync: the cloud tells the time and the charger echoes it. Proven: the value equals the log time. |
 | `b1` | `00` | charger id (16 bytes, padded), flag bytes, firmware string, a time stamp, flags | Device information. Layout not decoded. |
 | `fb` | `ff` | `05`, then four 60-byte records: each has the charger id, a firmware string and a few flag bytes | A list of four entries (probably the connectors or the device parts). Not decoded. |

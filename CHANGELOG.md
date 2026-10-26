@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The planning switch of the Raedian app (command `b3`) is followed: with the planning off the hub clears its profile so the charger charges freely, with it on the plan is written again. The plan itself is kept either way, and `_app_plan` shows `planning` on or off as an attribute. Which value is on and which off was inferred from four switches.
+
 - Fix: a window the app has switched off is kept in the plan and answered back to the app (it was dropped, so a new line added while the app's planning was off came back empty); only switched-on windows reach the charger.
 
 - `tools/raedian_frames.py` lists the Raedian protocol frames in a Home Assistant log and marks the commands the hub does not decode; `docs/raedian-protocol.md` documents the frame, the commands seen so far (clock sync, device information and others, mostly undecoded) and how to add one.

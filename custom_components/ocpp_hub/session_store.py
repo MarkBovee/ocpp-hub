@@ -112,6 +112,7 @@ class PlanStore:
     def __init__(self, hass: HomeAssistant) -> None:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, PLAN_STORAGE_KEY)
         self._plans: dict[str, list[PlanWindow]] = {}
+        self._planning: dict[str, bool] = {}
 
     # Read the saved plans. A record that cannot be read is skipped with a warning.
     async def async_load(self) -> None:
@@ -124,10 +125,21 @@ class PlanStore:
                 ]
             except KeyError, TypeError, ValueError, IndexError:
                 _LOGGER.warning("Skipping an unreadable plan in storage")
+        switches = stored.get("planning") if isinstance(stored, dict) else None
+        self._planning = {cp: bool(on) for cp, on in switches.items()} if isinstance(switches, dict) else {}
 
     # The plan of a charger, or None when the hub has none yet.
     def get(self, cp_id: str) -> list[PlanWindow] | None:
         return list(self._plans[cp_id]) if cp_id in self._plans else None
+
+    # Whether the plan applies to the charger: the app's switch for the planning. On until the app says otherwise.
+    def planning_on(self, cp_id: str) -> bool:
+        return self._planning.get(cp_id, True)
+
+    # Keep the switch of the planning and schedule a save.
+    def set_planning(self, cp_id: str, on: bool) -> None:
+        self._planning[cp_id] = on
+        self._store.async_delay_save(self._data, SAVE_DELAY_S)
 
     # Keep the plan of a charger and schedule a save.
     def set(self, cp_id: str, windows: list[PlanWindow]) -> None:
@@ -143,5 +155,6 @@ class PlanStore:
         return {
             "plans": {
                 cp: [[w.weekday, w.start_s, w.end_s, w.enabled] for w in windows] for cp, windows in self._plans.items()
-            }
+            },
+            "planning": dict(self._planning),
         }
