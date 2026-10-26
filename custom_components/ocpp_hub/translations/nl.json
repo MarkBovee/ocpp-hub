@@ -26,14 +26,20 @@
           "vendor_user": "Gebruikersnaam",
           "vendor_password": "Wachtwoord",
           "max_current": "Hoogste stroom (A)",
-          "vendor_commands": "Commando's van de backend"
+          "vendor_commands": "Commando's van de backend",
+          "schedule_entity": "Schema-helper",
+          "schedule_inside_a": "Limiet binnen de blokken (A)",
+          "schedule_outside_a": "Limiet buiten de blokken (A)"
         },
         "data_description": {
           "vendor_url": "Begint met ws:// of wss:// en bevat de host, de poort en het pad van de OCPP-backend van de fabrikant, zonder het serienummer van de laadpaal en zonder inloggegevens.",
           "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
           "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft.",
           "max_current": "De hoogste stroom per fase die de hub aan de lader mag vragen. Houd hem onder de limiet van de installateur. Een waarde onder 6 A bij de laadlimiet pauzeert de lader.",
-          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, een paar instellingen wijzigen, laadprofielen zetten, de kabel ontgrendelen en de connector buiten bedrijf zetten, binnen de stroomgrens hieronder. Reset, firmware, diagnostics en DataTransfer blijven geweigerd."
+          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, een paar instellingen wijzigen, laadprofielen zetten, de kabel ontgrendelen en de connector buiten bedrijf zetten, binnen de stroomgrens hieronder. Reset, firmware, diagnostics en DataTransfer blijven geweigerd.",
+          "schedule_entity": "Een schema-helper van Home Assistant. De blokken zijn de tijden waarin de lader mag laden. Op de knop Schema toepassen drukken schrijft het naar de lader; de helper wijzigen schrijft niets.",
+          "schedule_inside_a": "De stroom terwijl een blok aan staat. Leeg laten voor je stroomgrens; een blok kan een eigen limiet meegeven als data (limit).",
+          "schedule_outside_a": "De stroom als er geen blok aan staat. Leeg laten om de lader te pauzeren (0 A). Onder 6 A pauzeert."
         }
       }
     },
@@ -150,6 +156,9 @@
     "button": {
       "clear_charge_limit": {
         "name": "Laadlimiet wissen"
+      },
+      "apply_schedule": {
+        "name": "Schema toepassen"
       }
     }
   },
@@ -192,6 +201,9 @@
     },
     "charger_not_chosen": {
       "message": "Er is meer dan één lader (of geen) bekend; noem de lader met charger_id."
+    },
+    "schedule_helper_unavailable": {
+      "message": "De schema-helper ontbreekt of is niet beschikbaar."
     }
   },
   "services": {

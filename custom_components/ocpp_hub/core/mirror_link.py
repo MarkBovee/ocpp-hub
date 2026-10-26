@@ -377,6 +377,7 @@ class MirrorLink:
             self._session.snapshot.configuration,
             self._can_trigger,
             readings.confirmed_limit_a(self._session.snapshot),
+            lambda duration: readings.schedule_from_now(self._session.snapshot, self._clock(), duration),
         )
         _LOGGER.info("Vendor backend sent %s for %s; answered without passing it to the charger", action, self.cp_id)
         _LOGGER.debug("Vendor command %s payload for %s: %s", action, self.cp_id, frame[3])

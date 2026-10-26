@@ -72,18 +72,25 @@ def _purposes(transaction_id: int | None, learned: str | None) -> list[tuple[str
 
 # The longest schedule the hub installs, and the seconds in a day (a daily schedule has no period at or after it).
 MAX_SCHEDULE_PERIODS = 24
+MAX_WEEKLY_PERIODS = 96
 SECONDS_PER_DAY = 86400
 
 
-# Check a daily schedule given as (seconds after the start of the day, wished current) and return it with every current
-# turned into what is sent: the first period must start at 0, starts must grow and stay within the day, and every
-# current obeys the same rules as a single limit (the ceiling, and under 6 A meaning pause). Nothing is repaired.
-def checked_schedule(periods: Sequence[tuple[int, object]], policy: ControlPolicy) -> list[tuple[int, float]]:
-    if not 1 <= len(periods) <= MAX_SCHEDULE_PERIODS:
-        raise ControlError("invalid_schedule", f"a schedule has 1 to {MAX_SCHEDULE_PERIODS} periods")
+# Check a schedule given as (seconds after its start, wished current), over a day or a week, and return it with every
+# current turned into what is sent: the first period must start at 0, starts must grow and stay within the span, and
+# every current obeys the same rules as a single limit (the ceiling, and under 6 A meaning pause). Nothing is
+# repaired.
+def checked_schedule(
+    periods: Sequence[tuple[int, object]],
+    policy: ControlPolicy,
+    span_s: int = SECONDS_PER_DAY,
+    max_periods: int = MAX_SCHEDULE_PERIODS,
+) -> list[tuple[int, float]]:
+    if not 1 <= len(periods) <= max_periods:
+        raise ControlError("invalid_schedule", f"a schedule has 1 to {max_periods} periods")
     checked: list[tuple[int, float]] = []
     for start, wish in periods:
-        if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start < SECONDS_PER_DAY:
+        if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start < span_s:
             raise ControlError("invalid_schedule", f"{start!r} is not a time of the day")
         if (not checked and start != 0) or (checked and start <= checked[-1][0]):
             raise ControlError("invalid_schedule", "the first period starts at 00:00 and the starts must increase")
@@ -149,7 +156,24 @@ class ChargerControl:
     async def set_daily_schedule(
         self, anchor: datetime, periods: Sequence[tuple[int, object]]
     ) -> list[tuple[int, float]]:
-        schedule = checked_schedule(periods, self._policy)
+        return await self.set_schedule(anchor, periods, "Daily")
+
+    # Install a recurring schedule, daily or weekly, with the same rules as a daily one. The number of periods is held
+    # to what the charger says it supports (ChargingScheduleMaxPeriods) when the hub knows it. A weekly schedule starts
+    # on the weekday of `anchor`.
+    async def set_schedule(
+        self, anchor: datetime, periods: Sequence[tuple[int, object]], recurrency: str
+    ) -> list[tuple[int, float]]:
+        weekly = recurrency == "Weekly"
+        known = self._session.snapshot.configuration.get("ChargingScheduleMaxPeriods", "")
+        limit = int(known) if known.isascii() and known.isdigit() and len(known) <= 6 and int(known) > 0 else None
+        cap = MAX_WEEKLY_PERIODS if weekly else MAX_SCHEDULE_PERIODS
+        schedule = checked_schedule(
+            periods,
+            self._policy,
+            SECONDS_PER_DAY * 7 if weekly else SECONDS_PER_DAY,
+            min(cap, limit) if limit is not None else cap,
+        )
         anchor_iso = anchor.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         learned = self._session.snapshot.limit_purpose
         ladder = [
@@ -160,15 +184,19 @@ class ChargerControl:
             ladder.sort(key=lambda step: step[0] != learned)
         outcomes: list[str] = []
         for purpose, connector_id in ladder:
-            payload = commands.set_charging_schedule(connector_id, purpose, schedule, HUB_PROFILE_ID, anchor_iso)
+            payload = commands.set_charging_schedule(
+                connector_id, purpose, schedule, HUB_PROFILE_ID, anchor_iso, recurrency=recurrency
+            )
             status = await self._ask("SetChargingProfile", payload)
             outcomes.append(f"{purpose}={status}")
             if status == "Accepted":
                 self._session.record_limit(None, purpose)
                 self._session.request_effective_limit()
-                _LOGGER.info("[write] Daily schedule %s accepted by %s as %s", schedule, self._session.cp_id, purpose)
+                _LOGGER.info(
+                    "[write] %s schedule %s accepted by %s as %s", recurrency, schedule, self._session.cp_id, purpose
+                )
                 return schedule
-        _LOGGER.warning("[write] Daily schedule refused by %s: %s", self._session.cp_id, ", ".join(outcomes))
+        _LOGGER.warning("[write] %s schedule refused by %s: %s", recurrency, self._session.cp_id, ", ".join(outcomes))
         raise ControlError("rejected", ", ".join(outcomes))
 
     # Remove the hub's own limit again, so the charger goes back to what it had.

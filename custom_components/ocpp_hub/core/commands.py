@@ -83,8 +83,9 @@ def get_composite_schedule(connector_id: int, duration_s: int = 3600) -> dict[st
     return {"connectorId": connector_id, "duration": duration_s, "chargingRateUnit": "A"}
 
 
-# Build SetChargingProfile with a daily schedule: a recurring profile that starts at `anchor` and repeats every 24
-# hours, with one limit in amperes from each start offset (in seconds after the anchor) until the next one.
+# Build SetChargingProfile with a recurring schedule, daily or weekly: a profile that starts at `anchor` and repeats
+# every 24 hours (or every week), with one limit in amperes from each start offset (in seconds after the anchor) until
+# the next one.
 def set_charging_schedule(
     connector_id: int,
     purpose: str,
@@ -92,15 +93,16 @@ def set_charging_schedule(
     profile_id: int,
     anchor_iso: str,
     stack_level: int = 0,
+    recurrency: str = "Daily",
 ) -> dict[str, Any]:
     profile: dict[str, Any] = {
         "chargingProfileId": profile_id,
         "stackLevel": stack_level,
         "chargingProfilePurpose": purpose,
         "chargingProfileKind": "Recurring",
-        "recurrencyKind": "Daily",
+        "recurrencyKind": recurrency,
         "chargingSchedule": {
-            "duration": 86400,
+            "duration": 604800 if recurrency == "Weekly" else 86400,
             "startSchedule": anchor_iso,
             "chargingRateUnit": "A",
             "chargingSchedulePeriod": [{"startPeriod": start, "limit": limit} for start, limit in periods],
