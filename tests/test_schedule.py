@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from ocpp_hub_core.control import ControlError, ControlPolicy, checked_schedule
+from ocpp_hub_core.session import CONFIG_KEYS
 
 from tests.fake_vendor import eventually
 
@@ -188,3 +189,27 @@ async def test_a_weekly_schedule_is_sent_with_week_offsets(start_hub) -> None:
     assert [p["startPeriod"] for p in profile["chargingSchedule"]["chargingSchedulePeriod"]] == [0, 90000, 180000]
     with pytest.raises(ControlError):
         checked_schedule([(0, 6), (90000, 6)], POLICY, span_s=86400)
+
+
+# Intent: the schedule is read once the charger has been set up after a boot, without waiting for a write.
+# Why: after a restart of Home Assistant the schedule attribute stayed empty until something was written, which hid a
+# schedule the charger was already running.
+async def test_the_schedule_is_read_after_the_boot_setup(start_hub) -> None:
+    hub = await start_hub(setup_delay_s=0.0)
+    charger = await hub.charger()
+    charger.composite_limit = 6.0
+    charger.composite_periods = [(0, 6.0), (25200, 16.0)]
+    await charger.boot()
+    # Answer the setup: every configuration key as unknown, and the metering write as accepted.
+    for _ in range(len(CONFIG_KEYS)):
+        request = await charger.next_hub_call()
+        await charger.answer(request, {"configurationKey": [], "unknownKey": request[3]["key"]})
+    while True:
+        try:
+            request = await asyncio.wait_for(charger.next_hub_call(), 0.5)
+        except TimeoutError:
+            break
+        await charger.answer(request, {"status": "Accepted"})
+    await eventually(lambda: hub.listener.latest.schedule_periods, message="schedule not read after boot")
+
+    assert hub.listener.latest.schedule_periods == ((0, 6.0), (25200, 16.0))

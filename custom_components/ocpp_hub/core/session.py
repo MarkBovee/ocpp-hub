@@ -713,7 +713,7 @@ class ChargerSession:
             try:
                 await self._read_configuration()
                 await self._ensure_metering()
-                await self.refresh_effective_limit()
+                await self._refresh_limit_and_schedule()
             except CallError as error:
                 _LOGGER.warning(
                     "Setup of charger %s did not complete (try %s of %s): %s", self.cp_id, attempt, len(delays), error
