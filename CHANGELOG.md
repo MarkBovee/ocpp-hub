@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `tools/raedian_frames.py` lists the Raedian protocol frames in a Home Assistant log and marks the commands the hub does not decode; `docs/raedian-protocol.md` documents the frame, the commands seen so far (clock sync, device information and others, mostly undecoded) and how to add one.
+
 - Fix: a window the app switches off (instead of removing it) is left out of the plan, so taking a day out of the plan in the app works.
 
 - Fix: the app's planning question is answered before the limit on waiting vendor commands (the app opens with a burst of commands and the planning question was turned away with the rest); the limit is 16 instead of 4.
