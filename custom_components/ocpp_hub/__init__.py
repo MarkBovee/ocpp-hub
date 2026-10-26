@@ -224,7 +224,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     central = CentralSystem([], policy=policy)
     central.restore_limits(stored_limits)
     plans.bind(central)
-    listener = HubListener(hass, entry.entry_id, build, sessions, limits, mirror_enabled=settings is not None)
+    listener = HubListener(
+        hass,
+        entry.entry_id,
+        build,
+        sessions,
+        limits,
+        plans.snapshot_changed,
+        mirror_enabled=settings is not None,
+    )
     central.add_listeners([listener, *([mirror] if mirror is not None else [])])
     port = entry.data[CONF_PORT]
     try:

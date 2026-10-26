@@ -55,14 +55,24 @@ def classify(payload: dict[str, Any]) -> PlanWrite | PlanQuery | PlanUnreadable 
     if payload.get("vendorId") != "READIAN" or payload.get("messageId") != "RemoteConfiguration":
         return None
     try:
-        original = json.loads(payload.get("data") or "")["originalData"]
+        body = json.loads(payload.get("data") or "")
+        original = body["originalData"]
+        instruct = body.get("instructType")
+    except TypeError, ValueError, KeyError, AttributeError:
+        return None
+    try:
         frame = raedian.parse_frame(original)
-    except TypeError, ValueError, KeyError, raedian.FrameError:
+    except raedian.FrameError as error:
+        # A message that says it is about the planning but does not parse is not passed on untouched.
+        if str(instruct).lower() == f"{raedian.COMMAND_PLAN:02x}":
+            return PlanUnreadable(str(error))
         return None
     if frame.command != raedian.COMMAND_PLAN or frame.head != raedian.HEAD_CLOUD:
         return None
     if frame.payload == b"\x00":
         return PlanQuery(frame.session)
+    if frame.payload[:1] != b"\x01":
+        return PlanUnreadable("a planning write starts with 01")
     try:
         return PlanWrite(raedian.decode_plan(frame.payload), frame.session)
     except raedian.FrameError as error:

@@ -342,7 +342,13 @@ class ChargerSession:
             return
         # New knowledge replaces the old answer of the charger, which no longer describes what is in effect. The hub's
         # own limit is certain now; the vendor's restored one stays marked until the charger confirms it.
-        self._update(charge_limit_a=amps, limit_purpose=purpose, composite_limit_a=None, hub_limit_restored=False)
+        self._update(
+            charge_limit_a=amps,
+            limit_purpose=purpose,
+            composite_limit_a=None,
+            hub_limit_restored=False,
+            profile_writes=self._snapshot.profile_writes + 1,
+        )
 
     # Keep the planning that the Raedian app set in the charger, as the windows it wrote or the charger answered.
     def record_app_plan(self, windows: list[tuple[int, int, int]]) -> None:

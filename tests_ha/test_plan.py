@@ -90,3 +90,27 @@ async def test_a_refused_plan_is_not_kept_and_an_empty_plan_clears_the_profile(
     await wait_for(hass, lambda: state_of(hass, PLAN) == "0", "plan not cleared")
 
     assert kept == "1" and cleared[2] == "ClearChargingProfile"
+
+
+# Intent: when something else replaces the hub's profile after a plan was set (a single limit, here), the plan is
+# emptied instead of going on to claim what the charger no longer follows, and the app is answered with the empty plan.
+# Why: the plan and the single limit share one profile on the charger; showing the old windows after a limit replaced
+# them would tell the owner and the app something untrue.
+async def test_a_limit_written_after_the_plan_empties_the_plan(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger, entry = await _booted(hass, setup_hub, connect_charger)
+    await _call(hass, charger, {"windows": [MONDAY_NOON]})
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "1", "plan not shown")
+
+    call = asyncio.create_task(
+        hass.services.async_call(
+            "number", "set_value", {"entity_id": "number.ocpp_hub_test0001_charge_limit", "value": 10}, blocking=True
+        )
+    )
+    request = await charger.next_hub_call()
+    await charger.answer(request, {"status": "Accepted"})
+    await call
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "0", "plan not emptied")
+
+    assert entry.runtime_data.plans.plan("TEST0001") == []

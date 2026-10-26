@@ -15,7 +15,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import CONF_SCHEDULE_INSIDE, CONF_SCHEDULE_OUTSIDE, plan_signal
 from .core.central import CentralSystem
-from .core.control import ControlError
+from .core.control import ChargerControl, ControlError
+from .core.model import ChargerSnapshot
 from .core.plan_bridge import windows_to_blocks
 from .core.raedian import PlanWindow
 from .core.schedule_plan import SchedulePlanError, plan_week
@@ -35,6 +36,9 @@ class PlanSync:
         self._store = store
         self._options = options
         self._central: CentralSystem | None = None
+        # How many profile writes the plan has seen per charger, and the chargers the plan is writing to right now.
+        self._seen: dict[str, int] = {}
+        self._writing: set[str] = set()
 
     # Give the plan the central system it writes through; it is made after the mirror that needs the plan.
     def bind(self, central: CentralSystem) -> None:
@@ -65,6 +69,18 @@ class PlanSync:
         control = self._central.control(cp_id) if self._central is not None else None
         if control is None:
             raise ControlError("not_connected", "the charger is not connected")
+        self._writing.add(cp_id)
+        try:
+            await self._write(control, windows)
+        finally:
+            self._writing.discard(cp_id)
+            session = self._central.session(cp_id) if self._central is not None else None
+            if session is not None:
+                self._seen[cp_id] = session.snapshot.profile_writes
+        self._keep(cp_id, windows)
+
+    # Write the windows to the charger as one profile, or clear the hub's profile when there are none.
+    async def _write(self, control: ChargerControl, windows: list[PlanWindow]) -> None:
         if windows:
             inside = self._options.get(CONF_SCHEDULE_INSIDE)
             outside = self._options.get(CONF_SCHEDULE_OUTSIDE)
@@ -76,11 +92,23 @@ class PlanSync:
             await control.set_schedule(anchor_for(plan), plan.periods, plan.kind)
         else:
             await control.clear_current_limit()
-        self._keep(cp_id, windows)
 
     # Save the plans now; used when the entry unloads.
     async def async_flush(self) -> None:
         await self._store.async_flush()
+
+    # Called with every snapshot. The plan rides on the hub's own profile, which a single limit, a schedule or a clear
+    # also use; when such a write happens that the plan did not make, the profile is no longer the plan, so the plan is
+    # emptied and the app is told so, instead of both going on to claim what the charger no longer follows.
+    def snapshot_changed(self, snapshot: ChargerSnapshot) -> None:
+        cp_id = snapshot.cp_id
+        if cp_id in self._writing or not snapshot.connected:
+            return
+        seen = self._seen.get(cp_id, snapshot.profile_writes)
+        self._seen[cp_id] = snapshot.profile_writes
+        if snapshot.profile_writes > seen and self._store.get(cp_id):
+            _LOGGER.info("[plan] The profile of %s was replaced by another write; the plan is now empty", cp_id)
+            self._keep(cp_id, [])
 
     # Keep a plan and tell the entities that show it.
     def _keep(self, cp_id: str, windows: list[PlanWindow]) -> None:

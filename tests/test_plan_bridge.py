@@ -157,3 +157,20 @@ async def test_the_app_query_is_answered_from_the_plan_or_seeded_from_the_charge
 
     assert from_plan == [MONDAY, TUESDAY] and charger.hub_calls.empty()
     assert seeded[2]["status"] == "Accepted" and plan.imports == [[PlanWindow(3, 3600, 7200)]]
+
+
+# Intent: a planning message of the app that is damaged (a wrong check byte) or whose write does not start with 01 is
+# refused as unreadable, and is therefore not passed on to the charger.
+# Why: a planning message that the hub cannot read completely must not reach the charger's firmware untouched.
+def test_damaged_or_odd_planning_writes_are_unreadable() -> None:
+    good = _message(raedian.encode_plan([MONDAY]))
+    body = json.loads(str(good["data"]))
+    original = body["originalData"]
+    # The check byte is the hex pair at positions 14 and 15; change its second digit.
+    body["originalData"] = original[:15] + ("0" if original[15] != "0" else "1") + original[16:]
+    damaged = {**good, "data": json.dumps(body)}
+    odd = _message(b"\x00\x00")
+
+    assert isinstance(classify(damaged), PlanUnreadable)
+    assert isinstance(classify(odd), PlanUnreadable)
+    assert isinstance(classify(good), PlanWrite)
