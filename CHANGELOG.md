@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The planning of the Raedian app is decoded from its DataTransfer messages and shown as `_app_plan` (the windows per weekday). The protocol layout and its check byte are documented in `core/raedian.py`.
+
 - When commands are passed on, the vendor's own `DataTransfer` channel is passed on too (the Raedian app uses it for its planning screen); the request and the charger's answer are logged in full. Reset, firmware and diagnostics stay refused.
 
 - Schedule helper: choose a Home Assistant schedule helper in the options; the button *Apply schedule* turns its blocks (inside/outside limits, optionally a limit per block) into one recurring daily or weekly profile, under your ceiling. Nothing is written until the button is pressed. The vendor is answered with the charger's real schedule when it asks for more than the present moment.

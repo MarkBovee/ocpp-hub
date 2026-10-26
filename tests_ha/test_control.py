@@ -189,3 +189,26 @@ async def test_the_schedule_service_and_the_reported_schedule(
     assert [p["startPeriod"] for p in profile["chargingSchedule"]["chargingSchedulePeriod"]] == [0, 25200]
     shown = hass.states.get(in_effect).attributes["schedule"]
     assert [entry["limit_a"] for entry in shown] == [6.0, 16.0] and shown[0]["from"][:4].isdigit()
+
+
+# Intent: the app plan sensor shows nothing until the app has shown its planning, then the number of windows with the
+# day and the times of each, and is unavailable with the charger.
+# Why: the planning set in the Raedian app is the one the owner wants to see in Home Assistant.
+async def test_the_app_plan_sensor_lists_the_windows(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger = await _booted(hass, setup_hub, connect_charger)
+    plan = "sensor.ocpp_hub_test0001_app_plan"
+    assert state_of(hass, plan) == "unknown"
+    runtime = hass.config_entries.async_loaded_entries(DOMAIN)[0].runtime_data
+
+    runtime.central.session("TEST0001").record_app_plan([(1, 43200, 50400), (2, 46800, 61200)])
+    await wait_for(hass, lambda: state_of(hass, plan) == "2", "plan not shown")
+
+    windows = hass.states.get(plan).attributes["windows"]
+    assert windows == [
+        {"day": "monday", "from": "12:00", "to": "14:00"},
+        {"day": "tuesday", "from": "13:00", "to": "17:00"},
+    ]
+    await charger.close()
+    await wait_for(hass, lambda: state_of(hass, plan) == "unavailable", "plan not unavailable")

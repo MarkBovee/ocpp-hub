@@ -127,6 +127,9 @@
       },
       "limit_in_effect": {
         "name": "Geldende limiet"
+      },
+      "app_plan": {
+        "name": "Laadplanning (app)"
       }
     },
     "binary_sensor": {

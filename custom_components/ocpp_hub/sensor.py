@@ -141,6 +141,7 @@ async def async_setup_entry(
             ChargerSensor(runtime, entry.entry_id, cp_id, description) for description in CHARGER_SENSORS
         ]
         entities.append(LimitInEffectSensor(runtime, entry.entry_id, cp_id))
+        entities.append(AppPlanSensor(runtime, entry.entry_id, cp_id))
         entities.append(CurrentSessionSensor(runtime, entry.entry_id, cp_id))
         entities.append(LastSessionSensor(runtime, entry.entry_id, cp_id))
         if runtime.mirror is not None:
@@ -213,6 +214,49 @@ def _schedule_entries(snapshot: ChargerSnapshot) -> list[dict[str, Any]]:
         ]
     except OverflowError:
         return []
+
+
+# A time of day from seconds after midnight, as HH:MM (24:00 for the end of the day).
+def _clock_text(seconds: int) -> str:
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
+
+
+class AppPlanSensor(OcppHubEntity, SensorEntity):
+    """The planning that the Raedian app has set in the charger: how many windows, and the windows as attributes.
+
+    It is read from the exchanges that pass through the mirror, so it shows what the app wrote or read most recently on
+    this connection; it is unknown until the app has opened its planning.
+    """
+
+    _attr_translation_key = "app_plan"
+    _unrecorded_attributes = frozenset({"windows"})
+    _DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+    # Build the sensor for one charger.
+    def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
+        super().__init__(runtime, entry_id, cp_id, "sensor", "app_plan")
+
+    @property
+    def native_value(self) -> int | None:
+        """The number of windows, or None while the app has not shown its planning."""
+        plan = self._snapshot.app_plan
+        return None if plan is None else len(plan)
+
+    @property
+    def available(self) -> bool:
+        """A charger that is gone has no planning to show."""
+        return self._snapshot.connected
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        """The windows with the day, the start and the end; a window that ends before it starts runs overnight."""
+        plan = self._snapshot.app_plan or ()
+        return {
+            "windows": [
+                {"day": self._DAYS[day - 1], "from": _clock_text(start), "to": _clock_text(end)}
+                for day, start, end in plan
+            ]
+        }
 
 
 class LimitInEffectSensor(OcppHubEntity, SensorEntity):
