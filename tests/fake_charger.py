@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -32,6 +33,7 @@ class FakeCharger:
         self.composite_periods: list[tuple[int, float]] | None = None
         # A charger that cannot answer a request for a whole day, only for the present moment.
         self.refuse_long_composite = False
+        self.composite_calls = 0
         self._results: dict[str, asyncio.Future[list[Any]]] = {}
         self._connection: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -103,7 +105,7 @@ class FakeCharger:
             body = {
                 "status": "Accepted",
                 "connectorId": 1,
-                "scheduleStart": "2026-10-22T00:00:00Z",
+                "scheduleStart": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "chargingSchedule": schedule,
             }
             return [3, frame[1], body]
@@ -122,6 +124,7 @@ class FakeCharger:
             async for message in self._connection:
                 frame = json.loads(message)
                 if frame[0] == 2 and frame[2] == "GetCompositeSchedule" and self.answer_composite:
+                    self.composite_calls += 1
                     # The hub reads the limit in effect after every write. Most tests are not about that, so it is
                     # answered at once, as a charger that cannot do it would; a test sets composite_limit to see it.
                     await self._connection.send(json.dumps(self._composite_reply(frame)))

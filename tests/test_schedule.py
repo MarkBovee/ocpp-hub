@@ -115,7 +115,7 @@ async def test_the_schedule_the_charger_reports_is_read_and_kept(start_hub) -> N
 
     shown = hub.listener.latest
     assert shown.schedule_periods == ((0, 6.0), (25200, 16.0))
-    assert shown.schedule_start == datetime(2026, 10, 22, 0, 0, tzinfo=UTC) and shown.composite_limit_a == 6.0
+    assert abs((shown.schedule_start - datetime.now(UTC)).total_seconds()) < 60 and shown.composite_limit_a == 6.0
 
     charger.refuse_long_composite = True
     task = asyncio.create_task(control.set_current_limit(8))
@@ -125,3 +125,46 @@ async def test_the_schedule_the_charger_reports_is_read_and_kept(start_hub) -> N
     await eventually(lambda: not hub.listener.latest.schedule_periods, message="schedule not cleared")
 
     assert hub.listener.latest.composite_limit_a == 6.0
+
+
+# Intent: a composite schedule answer with an offset beyond a week, offsets that do not increase, or a start far from
+# now is refused as a whole.
+# Why: the charger is not trusted; an offset of 10**12 seconds made the limit sensor raise on every update, which would
+# stop the one sensor that tells what limit is in effect.
+@pytest.mark.parametrize(
+    "periods",
+    [
+        [{"startPeriod": 10**12, "limit": 6}],
+        [{"startPeriod": 0, "limit": 6}, {"startPeriod": 3600, "limit": 8}, {"startPeriod": 3600, "limit": 9}],
+        [{"startPeriod": 7200, "limit": 6}, {"startPeriod": 3600, "limit": 8}],
+        [{"startPeriod": 0, "limit": 6}, {"startPeriod": 700000, "limit": 8}],
+    ],
+)
+def test_hostile_schedule_answers_are_refused(periods: list[dict[str, Any]]) -> None:
+    from ocpp_hub_core.session import _composite_schedule
+
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+    answer = {"status": "Accepted", "chargingSchedule": {"chargingSchedulePeriod": periods}}
+    far = {
+        "status": "Accepted",
+        "scheduleStart": "9999-12-31T00:00:00Z",
+        "chargingSchedule": {"chargingSchedulePeriod": [{"startPeriod": 0, "limit": 6}]},
+    }
+
+    assert _composite_schedule(answer, now) == (None, ())
+    assert _composite_schedule(far, now) == (None, ())
+
+
+# Intent: many requests to read the limit in effect, made while a read runs, end in a small number of reads.
+# Why: each accepted vendor command asks for a read; a flood of commands must not become a flood of reads that holds up
+# the owner's own writes on the same connection.
+async def test_a_burst_of_read_requests_is_folded_into_few_reads(start_hub) -> None:
+    hub, charger, _ = await _booted(start_hub)
+    session = hub.central.session("TEST0001")
+    before = charger.composite_calls
+
+    for _ in range(20):
+        session.request_effective_limit()
+    await asyncio.sleep(0.5)
+
+    assert 0 < charger.composite_calls - before <= 4

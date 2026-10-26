@@ -201,6 +201,20 @@ def _session_attributes(session: ChargeSession) -> dict[str, Any]:
     }
 
 
+# The schedule the charger reported as a list of absolute times and limits. A time that cannot be represented gives an
+# empty list instead of an error, because a sensor that raises stops updating; the reader refuses such answers already.
+def _schedule_entries(snapshot: ChargerSnapshot) -> list[dict[str, Any]]:
+    if snapshot.schedule_start is None:
+        return []
+    try:
+        return [
+            {"from": (snapshot.schedule_start + timedelta(seconds=offset)).isoformat(), "limit_a": limit}
+            for offset, limit in snapshot.schedule_periods
+        ]
+    except OverflowError:
+        return []
+
+
 class LimitInEffectSensor(OcppHubEntity, SensorEntity):
     """The current limit that applies to the charger now, whoever set it, with the limits it comes from as attributes.
 
@@ -234,12 +248,7 @@ class LimitInEffectSensor(OcppHubEntity, SensorEntity):
             "charger_reported_a": snapshot.composite_limit_a,
             "source": "charger" if snapshot.composite_limit_a is not None else "calculated",
             "restored_unconfirmed": snapshot.limits_restored,
-            "schedule": [
-                {"from": (snapshot.schedule_start + timedelta(seconds=offset)).isoformat(), "limit_a": limit}
-                for offset, limit in snapshot.schedule_periods
-            ]
-            if snapshot.schedule_start is not None
-            else [],
+            "schedule": _schedule_entries(snapshot),
         }
 
 

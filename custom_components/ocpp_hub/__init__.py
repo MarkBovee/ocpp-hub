@@ -58,11 +58,19 @@ GET_SESSIONS_SCHEMA = vol.Schema(
 )
 
 
+# A limit from the service call as a float; text, nan or a number too big to be one is refused with a normal error.
+def _limit_value(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError) as error:
+        raise vol.Invalid("the limit must be a number") from error
+
+
 SET_SCHEDULE_SCHEMA = vol.Schema(
     {
         vol.Optional("charger_id"): str,
         vol.Required("periods"): vol.All(
-            [{vol.Required("time"): cv.time, vol.Required("limit"): vol.Coerce(float)}], vol.Length(min=1, max=24)
+            [{vol.Required("time"): cv.time, vol.Required("limit"): _limit_value}], vol.Length(min=1, max=24)
         ),
     }
 )
@@ -96,9 +104,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
         if cp_id is None:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="charger_not_chosen")
-        periods = [
-            (p["time"].hour * 3600 + p["time"].minute * 60 + p["time"].second, p["limit"]) for p in call.data["periods"]
-        ]
+        periods = [(_seconds_of_day(p["time"]), p["limit"]) for p in call.data["periods"]]
         anchor = dt_util.start_of_local_day()
         await run_write(runtime, cp_id, lambda control: control.set_daily_schedule(anchor, periods))
 

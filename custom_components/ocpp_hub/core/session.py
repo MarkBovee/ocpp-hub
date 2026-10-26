@@ -153,6 +153,10 @@ def _composite_limit(answer: dict[str, Any]) -> float | None:
 # How far ahead the schedule is read, in seconds, and the most periods of it that are kept.
 SCHEDULE_HORIZON_S = 86400
 MAX_SCHEDULE_PERIODS = 48
+# A schedule reaches at most a week ahead, and its start may differ from the hub's clock by at most two days; anything
+# else is not a schedule the hub can trust or show.
+MAX_SCHEDULE_OFFSET_S = 7 * 86400
+MAX_SCHEDULE_SKEW_S = 2 * 86400
 
 
 # The start and the periods of a GetCompositeSchedule answer, as (seconds after the start, amperes). An answer that is
@@ -168,12 +172,17 @@ def _composite_schedule(answer: dict[str, Any], now: datetime) -> tuple[datetime
     for period in raw:
         offset = period.get("startPeriod") if isinstance(period, dict) else None
         limit = _finite(period.get("limit")) if isinstance(period, dict) else None
-        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or limit is None:
+        if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= MAX_SCHEDULE_OFFSET_S:
             return None, ()
-        if not 0 <= limit <= MAX_STORED_LIMIT_A:
+        if periods and offset <= periods[-1][0]:
+            return None, ()
+        if limit is None or not 0 <= limit <= MAX_STORED_LIMIT_A:
             return None, ()
         periods.append((offset, limit))
-    return parse_timestamp(answer.get("scheduleStart") or schedule.get("startSchedule"), now), tuple(periods)
+    start = parse_timestamp(answer.get("scheduleStart") or schedule.get("startSchedule"), now)
+    if abs((start - now).total_seconds()) > MAX_SCHEDULE_SKEW_S:
+        return None, ()
+    return start, tuple(periods)
 
 
 # A text the charger sent, cut to MAX_TEXT; None when it is not a string or is empty.
@@ -221,6 +230,9 @@ class ChargerSession:
         self._tasks: set[asyncio.Task[None]] = set()
         # The setup that is running for this connection, so another boot does not start a second one.
         self._setup_task: asyncio.Task[None] | None = None
+        # The read of the limit in effect that is running, and whether another was asked for while it ran.
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_again = False
         # Metering settings the charger rejected on this connection; they are not offered again.
         self._rejected_keys: set[str] = set()
         # Charges that were running when the charger's previous connection ended, so a stop after a reconnect still
@@ -365,7 +377,19 @@ class ChargerSession:
     # Ask for the limit in effect in a task of its own, so a charger that answers slowly or never does not hold up the
     # write or the command that caused the question.
     def request_effective_limit(self) -> None:
-        self._start_task(self._refresh_limit_and_schedule())
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_again = True
+            return
+        self._refresh_task = self._start_task(self._refresh_loop())
+
+    # Read until nobody asked again meanwhile. Requests that come in while a read is running (a flood of vendor
+    # commands, say) are folded into one more read afterwards, so the number of reads stays small.
+    async def _refresh_loop(self) -> None:
+        while True:
+            self._refresh_again = False
+            await self._refresh_limit_and_schedule()
+            if not self._refresh_again:
+                return
 
     # Read the limit in effect first, then the schedule for the next 24 hours. They are separate questions on purpose: a
     # charger that refuses the long one must not cost the answer to the short one.
