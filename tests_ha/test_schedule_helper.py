@@ -115,3 +115,18 @@ async def test_a_missing_helper_is_reported_and_nothing_is_written(
 
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(charger.next_hub_call(), 0.2)
+
+
+# Intent: times and limits from a hand-edited helper that look like numbers but are not (a superscript digit, a number
+# too big to be a float) are refused with the planner's own error and nothing else.
+# Why: the helper's answer is not trusted; any other exception would escape the button as an unhandled error.
+def test_odd_digits_and_huge_limits_in_a_helper_are_refused_cleanly() -> None:
+    from custom_components.ocpp_hub.core.schedule_plan import SchedulePlanError
+    from custom_components.ocpp_hub.schedule_helper import blocks_from_schedule
+
+    for bad in (
+        {"monday": [{"from": "0²:00:00", "to": "09:00:00"}]},
+        {"monday": [{"from": "07:00:00", "to": "09:00:00", "data": {"limit": 10**400}}]},
+    ):
+        with pytest.raises(SchedulePlanError):
+            blocks_from_schedule(bad)

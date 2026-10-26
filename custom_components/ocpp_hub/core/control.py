@@ -166,7 +166,7 @@ class ChargerControl:
     ) -> list[tuple[int, float]]:
         weekly = recurrency == "Weekly"
         known = self._session.snapshot.configuration.get("ChargingScheduleMaxPeriods", "")
-        limit = int(known) if known.isdigit() and int(known) > 0 else None
+        limit = int(known) if known.isascii() and known.isdigit() and len(known) <= 6 and int(known) > 0 else None
         cap = MAX_WEEKLY_PERIODS if weekly else MAX_SCHEDULE_PERIODS
         schedule = checked_schedule(
             periods,
@@ -192,9 +192,11 @@ class ChargerControl:
             if status == "Accepted":
                 self._session.record_limit(None, purpose)
                 self._session.request_effective_limit()
-                _LOGGER.info("[write] Daily schedule %s accepted by %s as %s", schedule, self._session.cp_id, purpose)
+                _LOGGER.info(
+                    "[write] %s schedule %s accepted by %s as %s", recurrency, schedule, self._session.cp_id, purpose
+                )
                 return schedule
-        _LOGGER.warning("[write] Daily schedule refused by %s: %s", self._session.cp_id, ", ".join(outcomes))
+        _LOGGER.warning("[write] %s schedule refused by %s: %s", recurrency, self._session.cp_id, ", ".join(outcomes))
         raise ControlError("rejected", ", ".join(outcomes))
 
     # Remove the hub's own limit again, so the charger goes back to what it had.
