@@ -78,11 +78,15 @@ Instead of calling the service by hand you can use a **schedule helper** of Home
 
 The button `button.ocpp_hub_<charger id>_apply_schedule` reads the helper and writes it to the charger; **nothing is written when the helper changes, only when you press the button**. When every day has the same blocks the hub sends a daily profile, otherwise a weekly one that starts on Monday 00:00 local time, held to the number of periods the charger says it supports (`ChargingScheduleMaxPeriods`). Every limit stays under your ceiling. A schedule from the vendor's app that was passed on shows in `_limit_in_effect` in the same way as one set here; and when the vendor asks for the composite schedule of more than the present moment, it is answered with the schedule the charger reported, seen from now.
 
-### The planning of the Raedian app
+### The charging plan, shared with the Raedian app
 
-The Raedian app keeps its own planning (windows per weekday) in the charger, through the `DataTransfer` channel (`READIAN` / `RemoteConfiguration`), not through standard schedules. With commands passed on, `_app_plan` shows what the app wrote or read most recently on this connection: the number of windows, and the weekday, start and end of each in the `windows` attribute. It is unknown until the app has opened its planning (the hub does not ask the charger for it by itself), and a window that ends before it starts runs overnight.
+There is one charging plan, kept by the hub: windows per weekday in which the charger may charge. It is the master; the Raedian app and Home Assistant both show and change it.
 
-The layout was worked out from captured exchanges and is checked on every frame (a check byte, a length, and every byte of a window accounted for); anything that does not parse is ignored. Setting this planning from Home Assistant needs the session that the cloud opens with the charger and is not built; see `docs/roadmap.md`.
+- **From Home Assistant:** the service `ocpp_hub.set_plan` with `windows`, each a `day`, a start (`from`) and an end (`to`); an end at or before the start runs overnight. `_app_plan` shows the windows. An empty list removes the hub's profile.
+- **From the app:** the Raedian app keeps no planning of its own, it asks the charger for it through `DataTransfer` (`READIAN` / `RemoteConfiguration`, command `a7`). With commands passed on, the hub answers that question from the plan, and when the app writes a planning it is taken over by the plan and the app is told it worked. The app's planning is not passed on to the charger. The very first question, while the hub has no plan, goes to the charger and its answer becomes the plan.
+- **To the charger:** whenever the plan is set, by the app or from Home Assistant, the hub writes one recurring OCPP profile: the *limit inside the blocks* (your ceiling unless set) inside the windows and the *limit outside the blocks* (a pause unless set) outside them, daily when every day is the same and weekly otherwise. The plan is kept only when the charger accepts the profile; otherwise the app is told it failed. Lowering or raising the limits is done in the options. Mind that with the default of a pause outside the windows the charger does not charge outside them.
+
+The layout of the app's messages was worked out from captured exchanges and is checked on every frame (a check byte, a length, and every byte of a window accounted for); a planning message that does not parse completely is refused. See `core/raedian.py`.
 
 ## Vendor mirror
 

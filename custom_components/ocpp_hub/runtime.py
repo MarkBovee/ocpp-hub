@@ -19,6 +19,7 @@ from .core.frames import Frame
 from .core.mirror import VendorMirror
 from .core.model import ChargerSnapshot, ChargeSession, LimitMemory
 from .core.session import ChargerSession
+from .plan_sync import PlanSync
 from .session_store import LimitStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -181,6 +182,7 @@ class HubRuntime:
     mirror: VendorMirror | None
     sessions: SessionStore
     limits: LimitStore
+    plans: PlanSync
 
 
 type OcppHubConfigEntry = ConfigEntry[HubRuntime]

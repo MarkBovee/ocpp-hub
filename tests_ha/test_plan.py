@@ -1,0 +1,92 @@
+"""The plan of the hub: set from Home Assistant or by the app, written to the charger as a profile, and kept."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import pytest
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.ocpp_hub.const import DOMAIN
+from custom_components.ocpp_hub.core.raedian import PlanWindow
+from tests_ha.conftest import state_of, wait_for
+
+PLAN = "sensor.ocpp_hub_test0001_app_plan"
+MONDAY_NOON = {"day": "monday", "from": "12:00", "to": "14:00"}
+TUESDAY_AFTERNOON = {"day": "tuesday", "from": "13:00", "to": "17:00"}
+
+
+# A booted charger with its entities.
+async def _booted(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any, **options: Any
+) -> tuple[Any, MockConfigEntry]:
+    entry = await setup_hub(options)
+    charger = await connect_charger(entry)
+    await charger.boot()
+    await wait_for(hass, lambda: state_of(hass, PLAN) is not None, "no entities")
+    return charger, entry
+
+
+# Call a service while the fake charger answers the one write it causes, and return that write.
+async def _call(hass: HomeAssistant, charger: Any, data: dict[str, Any], status: str = "Accepted") -> list[Any]:
+    call = asyncio.create_task(hass.services.async_call(DOMAIN, "set_plan", data, blocking=True))
+    request = await charger.next_hub_call()
+    await charger.answer(request, {"status": status})
+    await call
+    return request
+
+
+# Intent: setting a plan writes one weekly profile to the charger with the limit inside the windows from the ceiling and
+# a pause outside them, shows the windows, and keeps them as the plan.
+# Why: the plan is what the app and Home Assistant both show; the charger must be given what the plan says.
+async def test_a_plan_is_written_to_the_charger_and_kept(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger, entry = await _booted(hass, setup_hub, connect_charger)
+
+    request = await _call(hass, charger, {"windows": [MONDAY_NOON, TUESDAY_AFTERNOON]})
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "2", "plan not shown")
+
+    schedule = request[3]["csChargingProfiles"]["chargingSchedule"]
+    assert request[3]["csChargingProfiles"]["recurrencyKind"] == "Weekly"
+    assert [(p["startPeriod"], p["limit"]) for p in schedule["chargingSchedulePeriod"]] == [
+        (0, 0.0),
+        (12 * 3600, 16.0),
+        (14 * 3600, 0.0),
+        (86400 + 13 * 3600, 16.0),
+        (86400 + 17 * 3600, 0.0),
+    ]
+    assert hass.states.get(PLAN).attributes["windows"] == [
+        {"day": "monday", "from": "12:00", "to": "14:00"},
+        {"day": "tuesday", "from": "13:00", "to": "17:00"},
+    ]
+    assert entry.runtime_data.plans.plan("TEST0001") == [PlanWindow(1, 43200, 50400), PlanWindow(2, 46800, 61200)]
+
+
+# Intent: when the charger refuses the profile the plan stays as it was and the service reports an error; an empty plan
+# removes the hub's profile instead of holding the charger at the outside limit.
+# Why: a plan the charger does not obey must not be shown as the plan, and an empty one means no restriction.
+async def test_a_refused_plan_is_not_kept_and_an_empty_plan_clears_the_profile(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger, entry = await _booted(hass, setup_hub, connect_charger)
+    await _call(hass, charger, {"windows": [MONDAY_NOON]})
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "1", "plan not shown")
+
+    refusal = asyncio.create_task(
+        hass.services.async_call(DOMAIN, "set_plan", {"windows": [MONDAY_NOON, TUESDAY_AFTERNOON]}, blocking=True)
+    )
+    for _ in range(2):
+        request = await charger.next_hub_call()
+        await charger.answer(request, {"status": "Rejected"})
+    with pytest.raises(HomeAssistantError):
+        await refusal
+    kept = state_of(hass, PLAN)
+    cleared = await _call(hass, charger, {"windows": []})
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "0", "plan not cleared")
+
+    assert kept == "1" and cleared[2] == "ClearChargingProfile"

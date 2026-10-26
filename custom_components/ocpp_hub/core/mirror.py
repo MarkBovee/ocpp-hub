@@ -18,6 +18,7 @@ from .frames import Frame
 from .mirror_link import MirrorLink
 from .mirror_model import MirrorSettings, MirrorStatus
 from .model import ChargerSnapshot, ChargeSession
+from .plan_bridge import PlanHandler
 from .session import SENDER_CHARGER, SENDER_HUB, ChargerSession
 from .txid_map import TransactionIdMap
 
@@ -35,11 +36,13 @@ class VendorMirror:
         ssl_context: ssl.SSLContext | None = None,
         clock: Callable[[], datetime] | None = None,
         policy: ControlPolicy | None = None,
+        plan_handler: PlanHandler | None = None,
     ) -> None:
         self._settings = settings
         self._ssl_context = ssl_context
         self._clock = clock
         self._policy = policy or ControlPolicy()
+        self._plan_handler = plan_handler
         self._started = False
         self._links: dict[str, MirrorLink] = {}
         # Kept per charger for as long as the mirror runs: a running session must still be stopped under the vendor's
@@ -81,7 +84,14 @@ class VendorMirror:
             return
         transactions = self._transactions.setdefault(session.cp_id, TransactionIdMap())
         link = MirrorLink(
-            session, self._settings, transactions, self._ssl_context, self._link_finished, self._clock, self._policy
+            session,
+            self._settings,
+            transactions,
+            self._ssl_context,
+            self._link_finished,
+            self._clock,
+            self._policy,
+            self._plan_handler,
         )
         self._links[session.cp_id] = link
         link.start()

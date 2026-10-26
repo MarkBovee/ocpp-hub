@@ -34,6 +34,8 @@ CONF_SCHEDULE_OUTSIDE = "schedule_outside_a"
 SERVICE_GET_SESSIONS = "get_sessions"
 # The service that installs a daily schedule of charge limits.
 SERVICE_SET_SCHEDULE = "set_schedule"
+# The service that sets the plan (windows per weekday) that the app also shows.
+SERVICE_SET_PLAN = "set_plan"
 
 # The logger of this package. Home Assistant often runs with warnings only, which would hide the connection and boot
 # lines this integration is judged by, so setup raises this one logger to INFO.
@@ -71,3 +73,8 @@ def session_signal(entry_id: str, cp_id: str) -> str:
 # Entity keys that existed once and were dropped: the three loose session sensors became one current-session sensor.
 # Their registry entries are removed at setup.
 RETIRED_ENTITY_KEYS = ("session_energy", "session_started", "session_duration")
+
+
+# The dispatcher signal that says the plan of one charger changed.
+def plan_signal(entry_id: str, cp_id: str) -> str:
+    return f"{DOMAIN}_plan_{entry_id}_{cp_id}"
