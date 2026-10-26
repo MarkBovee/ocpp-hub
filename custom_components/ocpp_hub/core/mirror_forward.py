@@ -11,8 +11,8 @@ from .mirror_queue import is_integer
 from .txid_map import TransactionIdMap
 
 # The commands that may reach the charger when the owner turned forwarding on. Reset, UpdateFirmware and GetDiagnostics
-# are not in the list on purpose: they stay refused until the owner decides otherwise. DataTransfer is left out too: its
-# content is vendor-specific and could carry a reboot or a firmware step, and what the NEO understands is not known.
+# are not in the list on purpose: they stay refused until the owner decides otherwise. DataTransfer is passed on as it
+# is, on the owner's explicit decision; its content is vendor-specific, so it is logged in full, both ways.
 # GetConfiguration and TriggerMessage are answered by the mirror from what it knows, never by the charger.
 FORWARDED = frozenset(
     {
@@ -23,6 +23,7 @@ FORWARDED = frozenset(
         "ChangeConfiguration",
         "ChangeAvailability",
         "UnlockConnector",
+        "DataTransfer",
     }
 )
 

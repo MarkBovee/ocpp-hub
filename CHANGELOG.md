@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- When commands are passed on, the vendor's own `DataTransfer` channel is passed on too (the Raedian app uses it for its planning screen); the request and the charger's answer are logged in full. Reset, firmware and diagnostics stay refused.
+
 - Schedule helper: choose a Home Assistant schedule helper in the options; the button *Apply schedule* turns its blocks (inside/outside limits, optionally a limit per block) into one recurring daily or weekly profile, under your ceiling. Nothing is written until the button is pressed. The vendor is answered with the charger's real schedule when it asks for more than the present moment.
 
 - Schedule: the charger's schedule for the next 24 hours is shown as an attribute of `_limit_in_effect`, and the service `ocpp_hub.set_schedule` installs a daily recurring schedule of limits (under your ceiling; under 6 A pauses).

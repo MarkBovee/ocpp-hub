@@ -427,6 +427,12 @@ class MirrorLink:
         _LOGGER.info(
             "[forward] Vendor %s for %s passed on; the charger answered %s", action, self.cp_id, answer.get("status")
         )
+        if action == "DataTransfer":
+            # A vendor-specific message the hub cannot judge: what was asked and what the charger said are both logged.
+            _LOGGER.info("[forward] DataTransfer request for %s: %s", self.cp_id, plain_text(str(plan.payload), 1500))
+            _LOGGER.info("[forward] DataTransfer answer of %s: %s", self.cp_id, plain_text(str(answer), 1500))
+        else:
+            _LOGGER.debug("[forward] the charger's answer to %s: %s", action, plain_text(str(answer), 1500))
         if answer.get("status") == "Accepted":
             self._note_accepted(action, plan.payload)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))

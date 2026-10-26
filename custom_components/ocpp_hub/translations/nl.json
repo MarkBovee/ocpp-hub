@@ -36,7 +36,7 @@
           "vendor_user": "Alleen als de backend om een gebruikersnaam vraagt. Stel er ook een wachtwoord bij in.",
           "vendor_password": "Wordt nooit meer getoond. Laat leeg om het opgeslagen wachtwoord te houden; het blijft alleen bewaard zolang de host van het adres gelijk blijft.",
           "max_current": "De hoogste stroom per fase die de hub aan de lader mag vragen. Houd hem onder de limiet van de installateur. Een waarde onder 6 A bij de laadlimiet pauzeert de lader.",
-          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, een paar instellingen wijzigen, laadprofielen zetten, de kabel ontgrendelen en de connector buiten bedrijf zetten, binnen de stroomgrens hieronder. Reset, firmware, diagnostics en DataTransfer blijven geweigerd.",
+          "vendor_commands": "Wat er gebeurt met commando's van de backend van de fabrikant. Doorlaten laat die laden starten en stoppen, een paar instellingen wijzigen, laadprofielen zetten, de kabel ontgrendelen, de connector buiten bedrijf zetten en zijn eigen DataTransfer-kanaal gebruiken, binnen de stroomgrens hieronder. Reset, firmware en diagnostics blijven geweigerd.",
           "schedule_entity": "Een schema-helper van Home Assistant. De blokken zijn de tijden waarin de lader mag laden. Op de knop Schema toepassen drukken schrijft het naar de lader; de helper wijzigen schrijft niets.",
           "schedule_inside_a": "De stroom terwijl een blok aan staat. Leeg laten voor je stroomgrens; een blok kan een eigen limiet meegeven als data (limit).",
           "schedule_outside_a": "De stroom als er geen blok aan staat. Leeg laten om de lader te pauzeren (0 A). Onder 6 A pauzeert."
