@@ -79,7 +79,7 @@ _WEBSOCKET_LOGGER.addFilter(_RedactAuthorization())
 # The error codes of the charger that are passed on to the vendor as they are; any other becomes an internal error.
 # The most vendor commands that may wait for the charger at once; the rest are refused, so a flood cannot hold up the
 # owner's own writes, which queue on the same connection.
-MAX_FORWARDS = 4
+MAX_FORWARDS = 16
 _RELAYED_ERRORS = frozenset({ERROR_NOT_SUPPORTED, ERROR_NOT_IMPLEMENTED, ERROR_FORMATION_VIOLATION, ERROR_INTERNAL})
 
 
@@ -404,15 +404,17 @@ class MirrorLink:
     async def _forward(
         self, connection: ClientConnection, unique_id: str, action: str, payload: dict[str, Any]
     ) -> None:
-        if len(self._forwards) > MAX_FORWARDS:
-            _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
-            await self._send_to_vendor(connection, build_call_result(unique_id, refusal_for(action)))
-            return
+        # The planning is answered by the hub itself and never waits for the charger, so it comes before the queue
+        # limit: the app opens with a burst of commands and its planning question must not be one that is turned away.
         if (
             action == "DataTransfer"
             and self._plan_handler is not None
             and await self._answer_planning(connection, unique_id, payload)
         ):
+            return
+        if len(self._forwards) > MAX_FORWARDS:
+            _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
+            await self._send_to_vendor(connection, build_call_result(unique_id, refusal_for(action)))
             return
         plan = plan_forward(action, payload, self._policy, self._transactions)
         if not isinstance(plan, Forward):

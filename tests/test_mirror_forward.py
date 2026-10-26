@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from ocpp_hub_core.control import HUB_PROFILE_ID, ControlPolicy
 from ocpp_hub_core.mirror_forward import Forward, Refuse, plan_forward
+from ocpp_hub_core.mirror_link import MAX_FORWARDS
 from ocpp_hub_core.txid_map import TransactionIdMap
 
 from tests.fake_vendor import eventually
@@ -236,11 +237,11 @@ async def test_a_flood_of_commands_is_refused_with_a_valid_answer(
 ) -> None:
     rig, charger = await _forwarding_rig(start_rig)
 
-    asked = [asyncio.create_task(rig.vendor.command(action, payload, timeout=5.0)) for _ in range(7)]
-    refused = [answer for answer in await asyncio.gather(*asked[4:]) if answer[0] == 3]
+    asked = [asyncio.create_task(rig.vendor.command(action, payload, timeout=5.0)) for _ in range(MAX_FORWARDS + 3)]
+    refused = [answer for answer in await asyncio.gather(*asked[MAX_FORWARDS:]) if answer[0] == 3]
 
     assert len(refused) == 3 and all(answer[2] == refusal for answer in refused)
-    assert charger.hub_calls.qsize() <= 4
+    assert charger.hub_calls.qsize() <= MAX_FORWARDS
 
 
 # Intent: a profile with a limit too big to be a number, a profile id that is not an integer, and an accepted clear with

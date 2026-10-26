@@ -174,3 +174,33 @@ def test_damaged_or_odd_planning_writes_are_unreadable() -> None:
     assert isinstance(classify(damaged), PlanUnreadable)
     assert isinstance(classify(odd), PlanUnreadable)
     assert isinstance(classify(good), PlanWrite)
+
+
+# Intent: while many vendor commands wait for the charger, a planning question of the app is still answered from the
+# plan of the hub.
+# Why: the app opens with a burst of commands; the planning question was turned away with the rest and the app showed
+# nothing.
+async def test_the_planning_is_answered_while_the_queue_is_full(start_rig) -> None:
+    import asyncio
+
+    from ocpp_hub_core.mirror_link import MAX_FORWARDS
+
+    from tests.fake_vendor import eventually
+
+    rig = await start_rig(commands="forward")
+    rig.mirror._plan_handler = FakePlan([MONDAY])
+    charger = await rig.hub.charger()
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+
+    # The charger never answers these, so they all stay waiting; wait until the queue is really full.
+    waiting = [
+        asyncio.create_task(rig.vendor.command("ClearChargingProfile", {"id": 5}, timeout=5.0))
+        for _ in range(MAX_FORWARDS + 3)
+    ]
+    await eventually(lambda: charger.hub_calls.qsize() >= 4, message="the queue did not fill")
+    answered = await asyncio.wait_for(_through(rig, charger, b"\x00"), 5)
+    for task in waiting:
+        task.cancel()
+
+    assert answered[2]["status"] == "Accepted"
