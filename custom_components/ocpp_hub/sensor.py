@@ -30,6 +30,7 @@ from .core import readings
 from .core.mirror_model import MirrorStatus
 from .core.model import ChargerSnapshot, ChargeSession
 from .entity import OcppHubEntity, async_add_charger_entities
+from .plan_sync import shown_windows
 from .runtime import HubRuntime, OcppHubConfigEntry
 
 # The mirror pushes no events, so the entities that show it are polled; a status ten seconds old is fresh enough.
@@ -250,11 +251,7 @@ class AppPlanSensor(OcppHubEntity, SensorEntity):
 
     # The plan as (weekday, start, end) windows, or None when nobody has told the hub one.
     def _windows(self) -> list[tuple[int, int, int]] | None:
-        held = self._runtime.plans.plan(self._cp_id)
-        if held is not None:
-            return [(w.weekday, w.start_s, w.end_s) for w in held if w.enabled]
-        seen = self._snapshot.app_plan
-        return None if seen is None else list(seen)
+        return shown_windows(self._runtime.plans, self._snapshot)
 
     @property
     def native_value(self) -> int | None:

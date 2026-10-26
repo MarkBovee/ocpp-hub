@@ -132,6 +132,11 @@
         "name": "Laadplanning (app)"
       }
     },
+    "calendar": {
+      "charging_plan": {
+        "name": "Laadplanning"
+      }
+    },
     "binary_sensor": {
       "connected": {
         "name": "Verbonden"
