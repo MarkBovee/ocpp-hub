@@ -66,15 +66,12 @@ async def test_a_forwarded_command_reaches_the_charger_and_its_answer_returns(st
     assert answer[0] == 3 and answer[2] == {"status": "Accepted"}
 
 
-# Intent: Reset, UpdateFirmware, GetDiagnostics and DataTransfer stay refused with forwarding on, and nothing reaches
-# the charger.
-# Why: the owner kept reset and firmware out of the first phase, and a DataTransfer can carry the same thing under a
-# vendor-specific name, which is not known for the NEO.
+# Intent: Reset, UpdateFirmware and GetDiagnostics stay refused with forwarding on, and nothing reaches the charger.
+# Why: the owner kept reset and firmware out of the first phase.
 @pytest.mark.parametrize(
     ("action", "payload", "expected"),
     [
         ("Reset", {"type": "Hard"}, {"status": "Rejected"}),
-        ("DataTransfer", {"vendorId": "v", "messageId": "reboot"}, {"status": "Rejected"}),
         ("UpdateFirmware", {"location": "https://vendor.example/fw", "retrieveDate": "t"}, {}),
         ("GetDiagnostics", {"location": "https://vendor.example/logs"}, {}),
     ],
@@ -214,7 +211,7 @@ async def test_a_charger_error_is_passed_back_to_the_vendor(start_rig) -> None:
         ("ChangeConfiguration", {"key": "ConnectionTimeOut", "value": 30}, False),
         ("ChangeConfiguration", {"key": "ConnectionTimeOut", "value": "30"}, True),
         ("ChangeConfiguration", {"key": "HeartbeatInterval", "value": "30"}, False),
-        ("DataTransfer", {"vendorId": "v"}, False),
+        ("DataTransfer", {"vendorId": "v"}, True),
     ],
 )
 def test_the_forwarding_rules(action: str, payload: dict[str, Any], allowed: bool) -> None:
@@ -264,3 +261,19 @@ def test_odd_numbers_and_ids_in_profiles_are_refused() -> None:
             TransactionIdMap(),
         )
         assert isinstance(plan, Refuse)
+
+
+# Intent: with forwarding on, a DataTransfer of any content reaches the charger as it is and the charger's answer goes
+# back to the vendor.
+# Why: the owner decided that the vendor's own channel is passed on; Reset, firmware and diagnostics are separate
+# commands and stay refused.
+async def test_a_data_transfer_reaches_the_charger_and_its_answer_returns(start_rig) -> None:
+    rig, charger = await _forwarding_rig(start_rig)
+    message = {"vendorId": "READIAN", "messageId": "RemoteConfiguration", "data": '{"instructType":"fe"}'}
+
+    asked = asyncio.create_task(rig.vendor.command("DataTransfer", message))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted", "data": "{}"})
+    answer = await asked
+
+    assert call[2] == "DataTransfer" and call[3] == message and answer[2]["status"] == "Accepted"
