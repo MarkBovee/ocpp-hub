@@ -26,6 +26,16 @@ from .session_store import PlanStore
 _LOGGER = logging.getLogger(__name__)
 
 
+# The plan as (weekday, start, end) windows the charger obeys, or None when nobody has told the hub one. The plan of
+# the hub wins; until there is one, it is what the app last read from the charger. Switched-off windows are left out.
+def shown_windows(plans: PlanSync, snapshot: ChargerSnapshot) -> list[tuple[int, int, int]] | None:
+    held = plans.plan(snapshot.cp_id)
+    if held is not None:
+        return [(w.weekday, w.start_s, w.end_s) for w in held if w.enabled]
+    seen = snapshot.app_plan
+    return None if seen is None else list(seen)
+
+
 class PlanSync:
     """Holds the plan of each charger and writes it to the charger. Implements the mirror's PlanHandler."""
 

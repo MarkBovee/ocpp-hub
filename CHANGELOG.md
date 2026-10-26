@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A calendar entity per charger (`calendar.ocpp_hub_<id>_charging_plan`) shows the charging plan as repeating events, so it can be seen in the calendar dashboard and used in automations. It is read-only; the plan is still changed in the app or with `ocpp_hub.set_plan`.
+
 - The planning switch of the Raedian app (command `b3`) is followed: with the planning off the hub clears its profile so the charger charges freely, with it on the plan is written again. The plan itself is kept either way, and `_app_plan` shows `planning` on or off as an attribute. Which value is on and which off was inferred from four switches.
 
 - Fix: a window the app has switched off is kept in the plan and answered back to the app (it was dropped, so a new line added while the app's planning was off came back empty); only switched-on windows reach the charger.

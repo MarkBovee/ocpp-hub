@@ -132,6 +132,11 @@
         "name": "Charging plan (app)"
       }
     },
+    "calendar": {
+      "charging_plan": {
+        "name": "Charging plan"
+      }
+    },
     "binary_sensor": {
       "connected": {
         "name": "Connected"

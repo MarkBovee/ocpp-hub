@@ -139,3 +139,36 @@ async def test_the_planning_switch_clears_and_restores_the_profile(
     assert cleared[2] == "ClearChargingProfile" and written[2] == "SetChargingProfile"
     assert plans.plan("TEST0001") == [PlanWindow(1, 43200, 50400)] and plans.planning_on("TEST0001")
     assert hass.states.get(PLAN).attributes["planning"] == "on"
+
+
+# Intent: the plan shows as a calendar: a Monday window gives an event on that Monday, an overnight window runs into the
+# next day, and a switched-off window gives none.
+# Why: the calendar is the way to see the plan in Home Assistant, and it is built from the same plan as the sensor.
+async def test_the_plan_is_shown_as_a_calendar(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    charger, entry = await _booted(hass, setup_hub, connect_charger)
+    await _call(
+        hass,
+        charger,
+        {"windows": [MONDAY_NOON, {"day": "friday", "from": "22:00", "to": "06:00"}]},
+    )
+    await wait_for(hass, lambda: state_of(hass, PLAN) == "2", "plan not shown")
+
+    answer = await hass.services.async_call(
+        "calendar",
+        "get_events",
+        {
+            "entity_id": "calendar.ocpp_hub_test0001_charging_plan",
+            "start_date_time": "2026-10-26T00:00:00",
+            "end_date_time": "2026-11-02T00:00:00",
+        },
+        blocking=True,
+        return_response=True,
+    )
+
+    events = answer["calendar.ocpp_hub_test0001_charging_plan"]["events"]
+    assert [(e["start"][:16], e["end"][:16]) for e in events] == [
+        ("2026-10-26T12:00", "2026-10-26T14:00"),
+        ("2026-10-30T22:00", "2026-10-31T06:00"),
+    ]
