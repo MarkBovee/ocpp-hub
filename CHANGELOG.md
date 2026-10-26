@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: a window the app has switched off is kept in the plan and answered back to the app (it was dropped, so a new line added while the app's planning was off came back empty); only switched-on windows reach the charger.
+
 - `tools/raedian_frames.py` lists the Raedian protocol frames in a Home Assistant log and marks the commands the hub does not decode; `docs/raedian-protocol.md` documents the frame, the commands seen so far (clock sync, device information and others, mostly undecoded) and how to add one.
 
 - Fix: a window the app switches off (instead of removing it) is left out of the plan, so taking a day out of the plan in the app works.

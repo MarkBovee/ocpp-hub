@@ -81,7 +81,7 @@ class PlanSync:
 
     # Write the windows to the charger as one profile, or clear the hub's profile when there are none.
     async def _write(self, control: ChargerControl, windows: list[PlanWindow]) -> None:
-        if windows:
+        if any(window.enabled for window in windows):
             inside = self._options.get(CONF_SCHEDULE_INSIDE)
             outside = self._options.get(CONF_SCHEDULE_OUTSIDE)
             plan = plan_week(
