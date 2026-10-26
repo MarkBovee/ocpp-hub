@@ -6,7 +6,8 @@ It was worked out from captured exchanges, not from documentation, so only what 
     check   = the XOR of every other byte of the frame
     head    = FE from the cloud, AA from the charger
     command A7 = the planning. Written with payload 01, count, then count windows of 12 bytes:
-        01, overnight flag, weekday (1 = Monday), start (4 bytes, seconds after midnight), end (same), 20.
+        01, overnight flag, weekday mask (bit 0 = Monday ... bit 6 = Sunday), start (4 bytes, seconds after
+        midnight), end (same), 20.
         Read with payload 00; an empty plan answers 00 00. A write is acknowledged with the single byte 00.
 """
 
@@ -83,7 +84,7 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
         raise FrameError("not a planning payload")
     windows: list[PlanWindow] = []
     for offset in range(2, len(payload), WINDOW_SIZE):
-        enabled, overnight, weekday, start, end, tail = (
+        enabled, overnight, day_mask, start, end, tail = (
             payload[offset],
             payload[offset + 1],
             payload[offset + 2],
@@ -91,12 +92,13 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
             int.from_bytes(payload[offset + 7 : offset + 11], "little"),
             payload[offset + 11],
         )
-        if enabled != 1 or tail != 0x20 or not 1 <= weekday <= 7 or max(start, end) > SECONDS_PER_DAY:
+        if enabled != 1 or tail != 0x20 or not 1 <= day_mask <= 0x7F or max(start, end) > SECONDS_PER_DAY:
             raise FrameError("a window is not one the hub understands")
-        window = PlanWindow(weekday, start, end)
-        if bool(overnight) != window.overnight:
+        # The app marks the days with a mask (Wednesday is 4, not 3); a window for several days is one per day here.
+        days = [PlanWindow(day, start, end) for day in range(1, 8) if day_mask >> (day - 1) & 1]
+        if bool(overnight) != days[0].overnight:
             raise FrameError("the overnight flag does not agree with the times")
-        windows.append(window)
+        windows.extend(days)
     return windows
 
 
@@ -104,7 +106,7 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
 def encode_plan(windows: list[PlanWindow]) -> bytes:
     payload = bytes([1, len(windows)])
     for window in windows:
-        payload += bytes([1, int(window.overnight), window.weekday])
+        payload += bytes([1, int(window.overnight), 1 << (window.weekday - 1)])
         payload += window.start_s.to_bytes(4, "little") + window.end_s.to_bytes(4, "little") + b"\x20"
     return payload
 
