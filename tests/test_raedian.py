@@ -72,14 +72,14 @@ def test_damaged_frames_are_refused(text: str) -> None:
         parse_frame(text)
 
 
-# Intent: a window with a start the wrong way round, a weekday outside 1 to 7, an end past the day or a count that
-# does not match the bytes is refused.
+# Intent: a window with a start the wrong way round, a weekday mask outside 1 to 127, an end past the day or a count
+# that does not match the bytes is refused.
 # Why: each of these means the layout was misread; refusing them is how a wrong guess shows up, not a wrong plan.
 @pytest.mark.parametrize(
     "payload",
     [
         bytes.fromhex("0101") + bytes.fromhex("01000800c0a80000e0c4000020"),
-        bytes.fromhex("0101010009c0a80000e0c4000020"),
+        bytes.fromhex("0101010080c0a80000e0c4000020"),
         bytes.fromhex("0101010001e0c40000c0a8000020"),
         bytes.fromhex("01010100010100ffff0000000020"),
     ],
@@ -120,3 +120,18 @@ async def test_the_app_plan_follows_the_exchanges_that_pass_through(start_rig) -
     await eventually(lambda: rig.hub.listener.latest.app_plan == ((1, 43200, 50400), (2, 46800, 61200)), message="plan")
     await exchange(READ_REQUEST, EMPTY_ANSWER)
     await eventually(lambda: rig.hub.listener.latest.app_plan == (), message="plan not cleared")
+
+
+# Intent: the weekday byte is a mask: Wednesday is written as 4, and a mask of 3 reads back as Monday and Tuesday.
+# Why: the app showed a plan answered with day numbers one day off (Wednesday came out as Monday and Tuesday).
+def test_the_weekday_byte_is_a_mask() -> None:
+    wednesday = PlanWindow(3, 36000, 43200)
+
+    assert encode_plan([wednesday])[4] == 4
+    assert decode_plan(encode_plan([wednesday])) == [wednesday]
+    assert decode_plan(
+        bytes([1, 1, 1, 0, 3]) + (36000).to_bytes(4, "little") + (43200).to_bytes(4, "little") + b"\x20"
+    ) == [
+        PlanWindow(1, 36000, 43200),
+        PlanWindow(2, 36000, 43200),
+    ]
