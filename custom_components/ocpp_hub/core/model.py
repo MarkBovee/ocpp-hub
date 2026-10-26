@@ -112,6 +112,9 @@ class ChargerSnapshot:
     # that schedule starts. Empty when the charger did not say.
     schedule_start: datetime | None = None
     schedule_periods: tuple[tuple[int, float], ...] = ()
+    # How many times the hub has written or cleared its own profile on this connection; whoever keeps a plan that rides
+    # on that profile uses it to notice that something else replaced it.
+    profile_writes: int = 0
     # The planning windows the Raedian app has set in the charger, as (weekday 1-7, start, end in seconds after
     # midnight); None until the app has written or read it on this connection.
     app_plan: tuple[tuple[int, int, int], ...] | None = None

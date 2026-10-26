@@ -191,9 +191,9 @@ async def test_the_schedule_service_and_the_reported_schedule(
     assert [entry["limit_a"] for entry in shown] == [6.0, 16.0] and shown[0]["from"][:4].isdigit()
 
 
-# Intent: the app plan sensor shows nothing until the app has shown its planning, then the number of windows with the
-# day and the times of each, and is unavailable with the charger.
-# Why: the planning set in the Raedian app is the one the owner wants to see in Home Assistant.
+# Intent: the plan sensor shows nothing until a plan is known, then the number of windows with the day and the times of
+# each, and keeps showing it while the charger is away.
+# Why: the planning is the hub's, so it is still there when the charger drops its connection for a moment.
 async def test_the_app_plan_sensor_lists_the_windows(
     hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
 ) -> None:
@@ -211,4 +211,5 @@ async def test_the_app_plan_sensor_lists_the_windows(
         {"day": "tuesday", "from": "13:00", "to": "17:00"},
     ]
     await charger.close()
-    await wait_for(hass, lambda: state_of(hass, plan) == "unavailable", "plan not unavailable")
+    await wait_for(hass, lambda: state_of(hass, "binary_sensor.ocpp_hub_test0001_connected") == "off", "not gone")
+    assert state_of(hass, plan) == "2"

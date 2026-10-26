@@ -25,7 +25,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from .const import MIRROR_POLL_INTERVAL, session_signal
+from .const import MIRROR_POLL_INTERVAL, plan_signal, session_signal
 from .core import readings
 from .core.mirror_model import MirrorStatus
 from .core.model import ChargerSnapshot, ChargeSession
@@ -222,10 +222,10 @@ def _clock_text(seconds: int) -> str:
 
 
 class AppPlanSensor(OcppHubEntity, SensorEntity):
-    """The planning that the Raedian app has set in the charger: how many windows, and the windows as attributes.
+    """The charging plan: how many windows, and the windows as attributes. The app shows and changes the same plan.
 
-    It is read from the exchanges that pass through the mirror, so it shows what the app wrote or read most recently on
-    this connection; it is unknown until the app has opened its planning.
+    It is the plan of the hub when there is one (set here or by the app); until then it is what the app last read from
+    the charger, and unknown if neither has happened.
     """
 
     _attr_translation_key = "app_plan"
@@ -236,25 +236,44 @@ class AppPlanSensor(OcppHubEntity, SensorEntity):
     def __init__(self, runtime: HubRuntime, entry_id: str, cp_id: str) -> None:
         super().__init__(runtime, entry_id, cp_id, "sensor", "app_plan")
 
+    # Also follow the plan: a plan set by the app or by a service changes this sensor, not only the snapshot.
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, plan_signal(self._entry_id, self._cp_id), self._plan_changed)
+        )
+
+    # Show the new plan.
+    @callback
+    def _plan_changed(self) -> None:
+        self.async_write_ha_state()
+
+    # The plan as (weekday, start, end) windows, or None when nobody has told the hub one.
+    def _windows(self) -> list[tuple[int, int, int]] | None:
+        held = self._runtime.plans.plan(self._cp_id)
+        if held is not None:
+            return [(w.weekday, w.start_s, w.end_s) for w in held]
+        seen = self._snapshot.app_plan
+        return None if seen is None else list(seen)
+
     @property
     def native_value(self) -> int | None:
-        """The number of windows, or None while the app has not shown its planning."""
-        plan = self._snapshot.app_plan
-        return None if plan is None else len(plan)
+        """The number of windows, or None while the plan is not known."""
+        windows = self._windows()
+        return None if windows is None else len(windows)
 
     @property
     def available(self) -> bool:
-        """A charger that is gone has no planning to show."""
-        return self._snapshot.connected
+        """The plan stays readable while the charger is away: it is the hub's."""
+        return True
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
         """The windows with the day, the start and the end; a window that ends before it starts runs overnight."""
-        plan = self._snapshot.app_plan or ()
         return {
             "windows": [
                 {"day": self._DAYS[day - 1], "from": _clock_text(start), "to": _clock_text(end)}
-                for day, start, end in plan
+                for day, start, end in self._windows() or ()
             ]
         }
 

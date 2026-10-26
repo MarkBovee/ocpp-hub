@@ -237,6 +237,20 @@
           "description": "Een lijst van periodes, elk met een tijdstip van de dag (UU:MM) en de limiet in ampère die vanaf dan geldt. De eerste periode begint om 00:00 en de tijden moeten oplopen."
         }
       }
+    },
+    "set_plan": {
+      "name": "Laadplanning instellen",
+      "description": "Stelt de laadplanning in: vensters per weekdag waarin de lader mag laden. De hub zet ze om in een terugkerend profiel op de lader (de limiet binnen en buiten de vensters komt uit de opties; buiten is een pauze tenzij anders ingesteld) en toont de planning aan de Raedian-app, die hem ook kan wijzigen. Een venster dat eindigt op of voor zijn begin loopt over middernacht. Een lege lijst verwijdert het profiel van de hub.",
+      "fields": {
+        "charger_id": {
+          "name": "Lader-ID",
+          "description": "De lader waarnaar geschreven wordt. Leeg laten als er maar één is."
+        },
+        "windows": {
+          "name": "Vensters",
+          "description": "Een lijst vensters, elk met een dag (monday tot sunday), een begin (from) en een eind (to)."
+        }
+      }
     }
   },
   "selector": {

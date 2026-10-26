@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from homeassistant.components import persistent_notification
@@ -19,6 +20,7 @@ from .core.frames import Frame
 from .core.mirror import VendorMirror
 from .core.model import ChargerSnapshot, ChargeSession, LimitMemory
 from .core.session import ChargerSession
+from .plan_sync import PlanSync
 from .session_store import LimitStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,11 +55,14 @@ class HubListener:
         build: str,
         sessions: SessionStore,
         limits: LimitStore,
+        plan_changed: Callable[[ChargerSnapshot], None] = lambda snapshot: None,
         mirror_enabled: bool = False,
     ) -> None:
         self._hass = hass
         self._sessions = sessions
         self._limits = limits
+        # Tells the plan about every snapshot, so it can notice that its profile was replaced.
+        self.plans_changed = plan_changed
         # What was last handed to storage per charger, so nothing is written when nothing changed.
         self._saved_limits: dict[str, LimitMemory] = {}
         self._entry_id = entry_id
@@ -83,6 +88,7 @@ class HubListener:
     def on_snapshot(self, snapshot: ChargerSnapshot) -> None:
         self.snapshots[snapshot.cp_id] = snapshot
         self._save_limits(snapshot)
+        self.plans_changed(snapshot)
         if snapshot.cp_id not in self._announced and _has_booted(snapshot):
             self._announced.add(snapshot.cp_id)
             _LOGGER.info(
@@ -181,6 +187,7 @@ class HubRuntime:
     mirror: VendorMirror | None
     sessions: SessionStore
     limits: LimitStore
+    plans: PlanSync
 
 
 type OcppHubConfigEntry = ConfigEntry[HubRuntime]

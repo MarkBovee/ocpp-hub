@@ -9,7 +9,7 @@ from pathlib import Path
 import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
@@ -29,15 +29,20 @@ from .const import (
     PACKAGE_LOGGER,
     RETIRED_ENTITY_KEYS,
     SERVICE_GET_SESSIONS,
+    SERVICE_SET_PLAN,
     SERVICE_SET_SCHEDULE,
 )
 from .control import run_write
 from .core.central import CentralSystem
-from .core.control import CHARGING_MIN_A, ControlPolicy
+from .core.control import CHARGING_MIN_A, ControlError, ControlPolicy
 from .core.mirror import VendorMirror
 from .core.mirror_model import COMMANDS_REJECT, MirrorSettings, MirrorSettingsError
+from .core.raedian import PlanWindow
+from .core.schedule_plan import SchedulePlanError
+from .plan_sync import PlanSync
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
-from .session_store import LimitStore, SessionStore
+from .schedule_helper import WEEKDAYS
+from .session_store import LimitStore, PlanStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +70,22 @@ def _limit_value(value: object) -> float:
     except (TypeError, ValueError, OverflowError) as error:
         raise vol.Invalid("the limit must be a number") from error
 
+
+SET_PLAN_SCHEMA = vol.Schema(
+    {
+        vol.Optional("charger_id"): str,
+        vol.Required("windows"): vol.All(
+            [
+                {
+                    vol.Required("day"): vol.In(WEEKDAYS),
+                    vol.Required("from"): cv.time,
+                    vol.Required("to"): cv.time,
+                }
+            ],
+            vol.Length(max=21),
+        ),
+    }
+)
 
 SET_SCHEDULE_SCHEMA = vol.Schema(
     {
@@ -111,7 +132,34 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(
         DOMAIN, SERVICE_GET_SESSIONS, get_sessions, schema=GET_SESSIONS_SCHEMA, supports_response=SupportsResponse.ONLY
     )
+
+    # Set the plan: windows per weekday, written to the charger as a recurring profile and shown to the app. An empty
+    # list clears the hub's profile. A window that ends at or before its start runs overnight.
+    async def set_plan(call: ServiceCall) -> None:
+        entries = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_hub_loaded")
+        runtime = entries[0].runtime_data
+        announced = runtime.listener.announced
+        cp_id = call.data.get("charger_id") or (announced[0] if len(announced) == 1 else None)
+        if cp_id is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="charger_not_chosen")
+        windows = [
+            PlanWindow(WEEKDAYS.index(w["day"]) + 1, _seconds_of_day(w["from"]), _seconds_of_day(w["to"]))
+            for w in call.data["windows"]
+        ]
+        try:
+            await runtime.plans.set_plan(cp_id, windows)
+        except (ControlError, SchedulePlanError) as error:
+            code = error.code if isinstance(error, ControlError) else "invalid_schedule"
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key=f"control_{code}",
+                translation_placeholders={"detail": str(error)},
+            ) from error
+
     hass.services.async_register(DOMAIN, SERVICE_SET_SCHEDULE, set_schedule, schema=SET_SCHEDULE_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_SET_PLAN, set_plan, schema=SET_PLAN_SCHEMA)
     return True
 
 
@@ -167,12 +215,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     limits = LimitStore(hass)
     stored_limits = await limits.async_load()
     policy = _control_policy(entry)
-    mirror = VendorMirror(settings, policy=policy) if settings is not None else None
+    plan_store = PlanStore(hass)
+    await plan_store.async_load()
+    plans = PlanSync(hass, entry.entry_id, plan_store, entry.options)
+    mirror = VendorMirror(settings, policy=policy, plan_handler=plans) if settings is not None else None
     if mirror is not None:
         await mirror.start()
     central = CentralSystem([], policy=policy)
     central.restore_limits(stored_limits)
-    listener = HubListener(hass, entry.entry_id, build, sessions, limits, mirror_enabled=settings is not None)
+    plans.bind(central)
+    listener = HubListener(
+        hass,
+        entry.entry_id,
+        build,
+        sessions,
+        limits,
+        plans.snapshot_changed,
+        mirror_enabled=settings is not None,
+    )
     central.add_listeners([listener, *([mirror] if mirror is not None else [])])
     port = entry.data[CONF_PORT]
     try:
@@ -182,7 +242,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
     try:
-        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits)
+        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits, plans)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
@@ -221,4 +281,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> 
         finally:
             await entry.runtime_data.sessions.async_flush()
             await entry.runtime_data.limits.async_flush()
+            await entry.runtime_data.plans.async_flush()
     return unloaded

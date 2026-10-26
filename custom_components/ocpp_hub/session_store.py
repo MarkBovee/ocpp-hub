@@ -10,6 +10,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .core.model import ChargeSession, LimitMemory
+from .core.raedian import PlanWindow
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,3 +100,44 @@ class LimitStore:
     # The limits as the JSON that is written.
     def _data(self) -> dict[str, Any]:
         return {"limits": {cp_id: memory.to_dict() for cp_id, memory in self._limits.items()}}
+
+
+PLAN_STORAGE_KEY = f"{DOMAIN}.plan"
+
+
+class PlanStore:
+    """The plan of each charger (windows per weekday), so the planning survives a restart of Home Assistant."""
+
+    # Keep the storage handle; nothing is read until async_load.
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, PLAN_STORAGE_KEY)
+        self._plans: dict[str, list[PlanWindow]] = {}
+
+    # Read the saved plans. A record that cannot be read is skipped with a warning.
+    async def async_load(self) -> None:
+        stored = await self._store.async_load()
+        records = stored.get("plans") if isinstance(stored, dict) else None
+        for cp_id, windows in records.items() if isinstance(records, dict) else []:
+            try:
+                self._plans[cp_id] = [PlanWindow(int(w[0]), int(w[1]), int(w[2])) for w in windows]
+            except KeyError, TypeError, ValueError, IndexError:
+                _LOGGER.warning("Skipping an unreadable plan in storage")
+
+    # The plan of a charger, or None when the hub has none yet.
+    def get(self, cp_id: str) -> list[PlanWindow] | None:
+        return list(self._plans[cp_id]) if cp_id in self._plans else None
+
+    # Keep the plan of a charger and schedule a save.
+    def set(self, cp_id: str, windows: list[PlanWindow]) -> None:
+        self._plans[cp_id] = list(windows)
+        self._store.async_delay_save(self._data, SAVE_DELAY_S)
+
+    # Save now; used when the entry unloads.
+    async def async_flush(self) -> None:
+        await self._store.async_save(self._data())
+
+    # The plans as the JSON that is written.
+    def _data(self) -> dict[str, Any]:
+        return {
+            "plans": {cp: [[w.weekday, w.start_s, w.end_s] for w in windows] for cp, windows in self._plans.items()}
+        }

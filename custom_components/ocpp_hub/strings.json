@@ -237,6 +237,20 @@
           "description": "A list of periods, each with a time of the day (HH:MM) and the limit in amperes that applies from then on. The first period starts at 00:00 and the times must increase."
         }
       }
+    },
+    "set_plan": {
+      "name": "Set charging plan",
+      "description": "Sets the charging plan: windows per weekday in which the charger may charge. The hub turns them into a recurring profile on the charger (the limit inside the windows and outside them come from the options; outside is a pause unless set otherwise) and shows the plan to the Raedian app, which can also change it. A window that ends at or before its start runs overnight. An empty list removes the hub's profile.",
+      "fields": {
+        "charger_id": {
+          "name": "Charger ID",
+          "description": "The charger to write to. Leave empty when there is only one."
+        },
+        "windows": {
+          "name": "Windows",
+          "description": "A list of windows, each with a day (monday to sunday), a start (from) and an end (to) time."
+        }
+      }
     }
   },
   "selector": {

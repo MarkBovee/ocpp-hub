@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- One charging plan kept by the hub, shared with the Raedian app: the app's planning is answered from it and what the app writes is taken over by it, `ocpp_hub.set_plan` sets it from Home Assistant, and it is written to the charger as a recurring profile (limit inside and outside the windows from the options). Needs commands passed on. Experimental: what the charger's own firmware planning does is not known.
+
 - The planning of the Raedian app is decoded from its DataTransfer messages and shown as `_app_plan` (the windows per weekday). The protocol layout and its check byte are documented in `core/raedian.py`.
 
 - When commands are passed on, the vendor's own `DataTransfer` channel is passed on too (the Raedian app uses it for its planning screen); the request and the charger's answer are logged in full. Reset, firmware and diagnostics stay refused.

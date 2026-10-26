@@ -21,6 +21,7 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 
 ## In progress
 
+- [~] One charging plan shared with the Raedian app (`ocpp_hub.set_plan`, answers and takes over the app's planning, written to the charger as a recurring profile). Tested with a fake charger and vendor.
 - [~] Schedule helper and weekly schedules: a Home Assistant schedule helper applied with a button (daily or weekly profile), and the vendor answered with the charger's real schedule. Tested with a fake charger; see the schedule item below for what is unproven.
 - [~] Schedule: read-back of the charger's 24-hour schedule and the service `ocpp_hub.set_schedule` (daily, recurring, under the ceiling). Tested with a fake charger; the NEO's behaviour with a recurring profile is unproven.
 - [~] Limit sync: the hub's and the vendor's limit are saved in Home Assistant, shown together with the limit in effect (read from the charger when it can say), and the vendor is answered with it. Tested with a fake charger and vendor; whether the NEO answers `GetCompositeSchedule` is not known yet.
@@ -31,7 +32,7 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 
 ## Open
 
-- [ ] Set the planning of the Raedian app from Home Assistant. The `a7` write is understood (windows of 12 bytes, XOR check byte), but a write needs the 8-byte session that the cloud's login (`fe`, 130 bytes of unknown content) opens with the charger. First find out whether the charger accepts a read with the last session or with an empty one; the owner must agree to every message the hub sends on its own.
+- [ ] Prove the charging plan on the charger and in the app: the app's reading of the plan shows the hub's windows (the format of a filled answer was assumed equal to a write; the first answer of the charger seeds the plan), and the charger follows the recurring profile. What the Raedian planning on the charger itself does is unknown; the hub no longer writes to it.
 
 - [ ] Check the vendor side of a real charge: that the status changes and the charge show up in the Raedian app, and what the vendor sends back.
 - [ ] Read the raw frames of a charge (logger `custom_components.ocpp_hub.frames` at debug) to see every measurand and field the NEO sends, and decide from that which further entities are worth making.

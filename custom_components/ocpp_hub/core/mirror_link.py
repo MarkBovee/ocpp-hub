@@ -49,6 +49,7 @@ from .mirror_queue import (
     is_integer,
 )
 from .mirror_rewrite import StartPairing, translate_for_vendor
+from .plan_bridge import PlanHandler, PlanQuery, PlanUnreadable, PlanWrite, classify, plan_answer, write_acknowledged
 from .raedian import plan_from_exchange
 from .session import CallError, CallRejectedError, ChargerSession
 from .txid_map import TransactionIdMap
@@ -110,8 +111,10 @@ class MirrorLink:
         on_finished: Callable[[MirrorLink], None],
         clock: Callable[[], datetime] | None = None,
         policy: ControlPolicy | None = None,
+        plan_handler: PlanHandler | None = None,
     ) -> None:
         self._session = session
+        self._plan_handler = plan_handler
         self._policy = policy or ControlPolicy()
         # Commands being passed on to the charger; they run beside the reader, which must keep reading meanwhile.
         self._forwards: set[asyncio.Task[None]] = set()
@@ -405,6 +408,12 @@ class MirrorLink:
             _LOGGER.warning("[forward] Vendor %s for %s refused: too many commands waiting", action, self.cp_id)
             await self._send_to_vendor(connection, build_call_result(unique_id, refusal_for(action)))
             return
+        if (
+            action == "DataTransfer"
+            and self._plan_handler is not None
+            and await self._answer_planning(connection, unique_id, payload)
+        ):
+            return
         plan = plan_forward(action, payload, self._policy, self._transactions)
         if not isinstance(plan, Forward):
             _LOGGER.warning("[forward] Vendor %s for %s refused: %s", action, self.cp_id, plain_text(plan.reason))
@@ -440,6 +449,37 @@ class MirrorLink:
             self._note_accepted(action, plan.payload)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))
 
+    # Answer the app's planning from the hub's own plan instead of passing it on. A write is taken over by the plan (and
+    # acknowledged only when that worked), a query is answered from the plan, and a message about the planning that the
+    # hub cannot read completely is refused. A query while the hub has no plan yet is passed on, and its answer becomes
+    # the plan. Returns True when the message has been answered here.
+    async def _answer_planning(self, connection: ClientConnection, unique_id: str, payload: dict[str, Any]) -> bool:
+        handler = self._plan_handler
+        kind = classify(payload)
+        if handler is None or kind is None:
+            return False
+        if isinstance(kind, PlanUnreadable):
+            _LOGGER.warning("[plan] The app's planning message for %s was refused: %s", self.cp_id, kind.reason)
+            await self._send_to_vendor(connection, build_call_result(unique_id, {"status": "Rejected"}))
+            return True
+        if isinstance(kind, PlanWrite):
+            stored = await handler.app_wrote(self.cp_id, kind.windows)
+            _LOGGER.info(
+                "[plan] The app wrote %s window(s) for %s; taken over: %s", len(kind.windows), self.cp_id, stored
+            )
+            reply = write_acknowledged(kind.session) if stored else {"status": "Rejected"}
+            await self._send_to_vendor(connection, build_call_result(unique_id, reply))
+            return True
+        assert isinstance(kind, PlanQuery)
+        windows = handler.plan(self.cp_id)
+        if windows is None:
+            return False
+        _LOGGER.info(
+            "[plan] The app asked for the planning of %s; answered with %s window(s)", self.cp_id, len(windows)
+        )
+        await self._send_to_vendor(connection, build_call_result(unique_id, plan_answer(kind.session, windows)))
+        return True
+
     # If this DataTransfer was a planning exchange of the Raedian app that parses completely, keep the plan it shows.
     # The data are JSON with the hex of the protocol frame in `originalData`; anything that does not fit is ignored.
     def _note_plan(self, request: dict[str, Any], answer: dict[str, Any]) -> None:
@@ -451,6 +491,8 @@ class MirrorLink:
             return
         if windows is not None:
             self._session.record_app_plan([(w.weekday, w.start_s, w.end_s) for w in windows])
+            if self._plan_handler is not None and self._plan_handler.plan(self.cp_id) is None:
+                self._plan_handler.imported(self.cp_id, windows)
 
     # Take over what an accepted command of the vendor changed on the charger: the vendor's limit for a profile it set
     # or cleared, and the hub's own limit when a clear without an id (or by filters) could have removed that as well.
