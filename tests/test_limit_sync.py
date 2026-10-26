@@ -257,3 +257,26 @@ async def test_a_vendor_write_does_not_drop_a_restored_hub_pause(start_rig) -> N
     shown = rig.hub.listener.latest
     assert shown.charge_limit_a == 0.0 and shown.vendor_limit_a == 10.0 and not shown.limits_restored
     assert rig.hub.central.limit_memory("TEST0001").hub_a in (None, 0.0)
+
+
+# Intent: when the vendor asks for more than the present moment, it is answered with the charger's own schedule as seen
+# from now (the limit in effect now, then each change); when the hub has no schedule it is answered with the one limit.
+# Why: this is how a schedule set in Home Assistant can show in the vendor's app, if the app asks for it; a one-limit
+# answer to a day-long question would hide every change.
+async def test_the_vendor_is_told_the_schedule_when_it_asks_for_a_day(start_rig) -> None:
+    rig = await start_rig()
+    charger = await rig.hub.charger()
+    charger.composite_limit = 6.0
+    charger.composite_periods = [(0, 6.0), (25200, 16.0)]
+    await charger.boot()
+    await eventually(lambda: rig.vendor.calls, message="no frame arrived")
+    control = rig.hub.central.control("TEST0001")
+    await _set(control, charger, 6)
+    await eventually(lambda: rig.hub.listener.latest.schedule_periods, message="schedule not read")
+
+    day = await rig.vendor.command("GetCompositeSchedule", {"connectorId": 1, "duration": 86400})
+    now_only = await rig.vendor.command("GetCompositeSchedule", {"connectorId": 1, "duration": 600})
+
+    periods = day[2]["chargingSchedule"]["chargingSchedulePeriod"]
+    assert periods[0] == {"startPeriod": 0, "limit": 6.0} and any(p["limit"] == 16.0 for p in periods)
+    assert len(now_only[2]["chargingSchedule"]["chargingSchedulePeriod"]) == 1

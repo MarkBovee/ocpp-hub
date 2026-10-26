@@ -69,6 +69,15 @@ data:
 
 The first period starts at 00:00 and the times increase. Every limit obeys the single limit rules: it stays under your ceiling, and under 6 A it pauses the charger. The hub installs it as one recurring daily profile that starts at midnight local time. It replaces the single charge limit, which uses the same profile; setting a charge limit replaces the schedule, and the *Clear charge limit* button removes either. Because the charger counts from a fixed point in UTC, the change between summer and winter time moves the schedule by an hour until you set it again. The charger accepting a schedule does not prove that it follows it; the attribute above shows what it reports, and the first night will show the rest.
 
+### Schedule helper
+
+Instead of calling the service by hand you can use a **schedule helper** of Home Assistant (Settings, Devices & services, Helpers, Schedule), which has a weekly editor with blocks per weekday. Choose it in the options of OCPP Hub (*Schedule helper*). Its blocks are the times in which the charger may charge:
+
+- inside a block the charger gets *Limit inside the blocks* (empty means your ceiling), or the `limit` that the block carries in its data;
+- outside the blocks it gets *Limit outside the blocks* (empty means 0 A, a pause; under 6 A pauses).
+
+The button `button.ocpp_hub_<charger id>_apply_schedule` reads the helper and writes it to the charger; **nothing is written when the helper changes, only when you press the button**. When every day has the same blocks the hub sends a daily profile, otherwise a weekly one that starts on Monday 00:00 local time, held to the number of periods the charger says it supports (`ChargingScheduleMaxPeriods`). Every limit stays under your ceiling. A schedule from the vendor's app that was passed on shows in `_limit_in_effect` in the same way as one set here; and when the vendor asks for the composite schedule of more than the present moment, it is answered with the schedule the charger reported, seen from now.
+
 ## Vendor mirror
 
 Open the integration's options and fill in:

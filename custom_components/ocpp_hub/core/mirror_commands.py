@@ -56,6 +56,7 @@ def answer_vendor_call(
     configuration: Mapping[str, str],
     can_trigger: Callable[[TriggerRequest], bool],
     limit_a: float | None = None,
+    schedule_for: Callable[[int], list[tuple[int, float]] | None] | None = None,
 ) -> VendorAnswer:
     match action:
         case "GetConfiguration":
@@ -63,7 +64,7 @@ def answer_vendor_call(
         case "TriggerMessage":
             return _trigger_answer(unique_id, payload, can_trigger)
         case "GetCompositeSchedule":
-            return VendorAnswer(build_call_result(unique_id, _composite_answer(payload, limit_a)))
+            return VendorAnswer(build_call_result(unique_id, _composite_answer(payload, limit_a, schedule_for)))
         case _ if action in REFUSALS:
             return VendorAnswer(build_call_result(unique_id, dict(REFUSALS[action])))
         case _:
@@ -72,13 +73,20 @@ def answer_vendor_call(
 
 # Answer GetCompositeSchedule from the limit the hub knows is in effect, so the vendor sees the limit that Home
 # Assistant or its own app set. Without a known limit the vendor is told there is none to report (Rejected).
-def _composite_answer(payload: dict[str, Any], limit_a: float | None) -> dict[str, Any]:
+def _composite_answer(
+    payload: dict[str, Any],
+    limit_a: float | None,
+    schedule_for: Callable[[int], list[tuple[int, float]] | None] | None,
+) -> dict[str, Any]:
     connector = payload.get("connectorId")
     duration = payload.get("duration")
     if limit_a is None or not is_integer(connector) or not is_integer(duration):
         return {"status": "Rejected"}
-    period = {"startPeriod": 0, "limit": limit_a}
-    schedule = {"duration": duration, "chargingRateUnit": "A", "chargingSchedulePeriod": [period]}
+    # A question about more than the present moment gets the charger's own schedule when the hub has it.
+    real = schedule_for(duration) if schedule_for is not None and duration > 3600 else None
+    pairs = real or [(0, limit_a)]
+    periods = [{"startPeriod": start, "limit": limit} for start, limit in pairs]
+    schedule = {"duration": duration, "chargingRateUnit": "A", "chargingSchedulePeriod": periods}
     return {"status": "Accepted", "connectorId": connector, "chargingSchedule": schedule}
 
 

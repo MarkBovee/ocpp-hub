@@ -188,3 +188,23 @@ def confirmed_limit_a(snapshot: ChargerSnapshot) -> float | None:
     if snapshot.limits_restored:
         return None
     return effective_limit_a(snapshot)
+
+
+# The charger's reported schedule as seen from `now`: (seconds from now, amperes), starting with the limit in effect
+# at this moment and then each change within `duration_s`. None when the hub has no schedule from the charger, or the
+# one it has is older than the day it covers.
+def schedule_from_now(snapshot: ChargerSnapshot, now: datetime, duration_s: int) -> list[tuple[int, float]] | None:
+    start = snapshot.schedule_start
+    if start is None or not snapshot.schedule_periods:
+        return None
+    elapsed = (now - start).total_seconds()
+    if elapsed > 86400:
+        return None
+    current = snapshot.schedule_periods[0][1]
+    changes: list[tuple[int, float]] = []
+    for offset, limit in snapshot.schedule_periods:
+        if offset <= elapsed:
+            current = limit
+        elif offset - elapsed < duration_s:
+            changes.append((int(offset - elapsed), limit))
+    return [(0, current), *changes]

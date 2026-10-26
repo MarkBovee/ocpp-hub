@@ -26,14 +26,20 @@
           "vendor_user": "User name",
           "vendor_password": "Password",
           "max_current": "Highest current (A)",
-          "vendor_commands": "Commands from the backend"
+          "vendor_commands": "Commands from the backend",
+          "schedule_entity": "Schedule helper",
+          "schedule_inside_a": "Limit inside the blocks (A)",
+          "schedule_outside_a": "Limit outside the blocks (A)"
         },
         "data_description": {
           "vendor_url": "Starts with ws:// or wss:// and holds the host, the port and the path of the manufacturer's OCPP backend, without the charger's serial number and without credentials.",
           "vendor_user": "Only if the backend asks for a user name. Set a password with it.",
           "vendor_password": "Never shown again. Leave empty to keep the stored password; it is only kept while the host of the address stays the same.",
           "max_current": "The highest current per phase the hub may ask the charger for. Keep it below the installer's own limit. A value under 6 A in the charge limit pauses the charger.",
-          "vendor_commands": "What happens to commands from the manufacturer's backend. Passing them on lets it start and stop charges, change a few settings, set charging profiles, unlock the cable and set the connector inoperative, within the current ceiling below. Reset, firmware, diagnostics and DataTransfer stay refused."
+          "vendor_commands": "What happens to commands from the manufacturer's backend. Passing them on lets it start and stop charges, change a few settings, set charging profiles, unlock the cable and set the connector inoperative, within the current ceiling below. Reset, firmware, diagnostics and DataTransfer stay refused.",
+          "schedule_entity": "A schedule helper of Home Assistant. Its blocks are the times in which the charger may charge. Pressing the apply-schedule button writes it to the charger; changing the helper writes nothing.",
+          "schedule_inside_a": "The current while a block is on. Leave empty to use your ceiling; a block can carry its own limit as data (limit).",
+          "schedule_outside_a": "The current when no block is on. Leave empty to pause the charger (0 A). Under 6 A pauses."
         }
       }
     },
@@ -150,6 +156,9 @@
     "button": {
       "clear_charge_limit": {
         "name": "Clear charge limit"
+      },
+      "apply_schedule": {
+        "name": "Apply schedule"
       }
     }
   },
@@ -192,6 +201,9 @@
     },
     "charger_not_chosen": {
       "message": "More than one charger (or none) is known; name the charger with charger_id."
+    },
+    "schedule_helper_unavailable": {
+      "message": "The schedule helper is missing or unavailable."
     }
   },
   "services": {

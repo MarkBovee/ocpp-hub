@@ -10,6 +10,8 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -23,6 +25,9 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_MAX_CURRENT,
     CONF_PORT,
+    CONF_SCHEDULE_ENTITY,
+    CONF_SCHEDULE_INSIDE,
+    CONF_SCHEDULE_OUTSIDE,
     CONF_VENDOR_COMMANDS,
     CONF_VENDOR_PASSWORD,
     CONF_VENDOR_URL,
@@ -73,6 +78,17 @@ def vendor_options(form: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[s
     return options
 
 
+# The schedule options from the form: the helper and the two limits, each only when it was filled in.
+def schedule_options(form: Mapping[str, Any]) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if form.get(CONF_SCHEDULE_ENTITY):
+        options[CONF_SCHEDULE_ENTITY] = form[CONF_SCHEDULE_ENTITY]
+        for key in (CONF_SCHEDULE_INSIDE, CONF_SCHEDULE_OUTSIDE):
+            if form.get(key) is not None:
+                options[key] = float(form[key])
+    return options
+
+
 class OcppHubConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup form."""
 
@@ -108,7 +124,9 @@ class OcppHubOptionsFlow(OptionsFlow):
             try:
                 ceiling = int(user_input.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT))
                 options = vendor_options(user_input, self.config_entry.options)
-                return self.async_create_entry(data={**options, CONF_MAX_CURRENT: ceiling})
+                return self.async_create_entry(
+                    data={**options, CONF_MAX_CURRENT: ceiling, **schedule_options(user_input)}
+                )
             except MirrorSettingsError as error:
                 errors[ERROR_FIELDS.get(error.code, "base")] = error.code
         shown = user_input if user_input is not None else self.config_entry.options
@@ -122,6 +140,15 @@ class OcppHubOptionsFlow(OptionsFlow):
                 ): SelectSelector(
                     SelectSelectorConfig(options=list(COMMAND_POLICIES), translation_key=CONF_VENDOR_COMMANDS)
                 ),
+                vol.Optional(
+                    CONF_SCHEDULE_ENTITY, description={"suggested_value": shown.get(CONF_SCHEDULE_ENTITY)}
+                ): EntitySelector(EntitySelectorConfig(domain="schedule")),
+                vol.Optional(
+                    CONF_SCHEDULE_INSIDE, description={"suggested_value": shown.get(CONF_SCHEDULE_INSIDE)}
+                ): NumberSelector(NumberSelectorConfig(min=0, max=80, step=1, mode=NumberSelectorMode.BOX)),
+                vol.Optional(
+                    CONF_SCHEDULE_OUTSIDE, description={"suggested_value": shown.get(CONF_SCHEDULE_OUTSIDE)}
+                ): NumberSelector(NumberSelectorConfig(min=0, max=80, step=1, mode=NumberSelectorMode.BOX)),
                 vol.Optional(
                     CONF_MAX_CURRENT,
                     default=int(shown.get(CONF_MAX_CURRENT, DEFAULT_MAX_CURRENT)),

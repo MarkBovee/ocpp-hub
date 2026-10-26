@@ -24,6 +24,12 @@ CONF_VENDOR_COMMANDS = "vendor_commands"
 CONF_MAX_CURRENT = "max_current"
 DEFAULT_MAX_CURRENT = 16
 
+# The schedule helper that the "apply schedule" button turns into a charging profile, and the limits inside and outside
+# its blocks. Without an inside limit the ceiling is used; without an outside limit the charger is paused.
+CONF_SCHEDULE_ENTITY = "schedule_entity"
+CONF_SCHEDULE_INSIDE = "schedule_inside_a"
+CONF_SCHEDULE_OUTSIDE = "schedule_outside_a"
+
 # The service that returns the charge history.
 SERVICE_GET_SESSIONS = "get_sessions"
 # The service that installs a daily schedule of charge limits.

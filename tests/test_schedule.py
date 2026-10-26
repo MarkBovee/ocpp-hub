@@ -168,3 +168,23 @@ async def test_a_burst_of_read_requests_is_folded_into_few_reads(start_hub) -> N
     await asyncio.sleep(0.5)
 
     assert 0 < charger.composite_calls - before <= 4
+
+
+# Intent: a weekly schedule is sent with the weekly recurrence and a duration of a week and accepts offsets beyond a
+# day, while the same offsets are refused in a daily schedule.
+# Why: the helper in Home Assistant plans a whole week; a weekly offset must not be mistaken for a day offset, and a
+# daily schedule must not accept one.
+async def test_a_weekly_schedule_is_sent_with_week_offsets(start_hub) -> None:
+    hub, charger, control = await _booted(start_hub)
+    periods = [(0, 0), (90000, 16), (180000, 6)]
+
+    task = asyncio.create_task(control.set_schedule(ANCHOR, periods, "Weekly"))
+    call = await charger.next_hub_call()
+    await charger.answer(call, {"status": "Accepted"})
+    await task
+
+    profile = call[3]["csChargingProfiles"]
+    assert profile["recurrencyKind"] == "Weekly" and profile["chargingSchedule"]["duration"] == 604800
+    assert [p["startPeriod"] for p in profile["chargingSchedule"]["chargingSchedulePeriod"]] == [0, 90000, 180000]
+    with pytest.raises(ControlError):
+        checked_schedule([(0, 6), (90000, 6)], POLICY, span_s=86400)
