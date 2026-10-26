@@ -18,7 +18,7 @@ WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 # A time of day such as "07:30:00" (or "24:00:00" for the end of the day) as seconds after midnight.
 def _seconds(text: object) -> int:
     parts = str(text).split(":")
-    if not 2 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+    if not 2 <= len(parts) <= 3 or not all(part.isascii() and part.isdigit() and len(part) <= 2 for part in parts):
         raise SchedulePlanError(f"{text!r} is not a time of day")
     hours, minutes = int(parts[0]), int(parts[1])
     seconds = int(parts[2]) if len(parts) == 3 else 0
@@ -43,7 +43,10 @@ def blocks_from_schedule(schedule: Mapping[str, Any]) -> dict[int, list[Block]]:
             limit = data.get("limit") if isinstance(data, dict) else None
             if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float))):
                 raise SchedulePlanError(f"a block of {name} has a limit that is not a number")
-            own = None if limit is None else float(limit)
+            try:
+                own = None if limit is None else float(limit)
+            except OverflowError as error:
+                raise SchedulePlanError(f"a block of {name} has a limit that is too large") from error
             day_blocks.append(Block(_seconds(entry["from"]), _seconds(entry["to"]), own))
         blocks[day] = day_blocks
     return blocks
