@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -201,6 +201,20 @@ def _session_attributes(session: ChargeSession) -> dict[str, Any]:
     }
 
 
+# The schedule the charger reported as a list of absolute times and limits. A time that cannot be represented gives an
+# empty list instead of an error, because a sensor that raises stops updating; the reader refuses such answers already.
+def _schedule_entries(snapshot: ChargerSnapshot) -> list[dict[str, Any]]:
+    if snapshot.schedule_start is None:
+        return []
+    try:
+        return [
+            {"from": (snapshot.schedule_start + timedelta(seconds=offset)).isoformat(), "limit_a": limit}
+            for offset, limit in snapshot.schedule_periods
+        ]
+    except OverflowError:
+        return []
+
+
 class LimitInEffectSensor(OcppHubEntity, SensorEntity):
     """The current limit that applies to the charger now, whoever set it, with the limits it comes from as attributes.
 
@@ -209,6 +223,8 @@ class LimitInEffectSensor(OcppHubEntity, SensorEntity):
     """
 
     _attr_translation_key = "limit_in_effect"
+    # The schedule changes with every read and can be long; it is shown but not kept in the database.
+    _unrecorded_attributes = frozenset({"schedule"})
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -232,6 +248,7 @@ class LimitInEffectSensor(OcppHubEntity, SensorEntity):
             "charger_reported_a": snapshot.composite_limit_a,
             "source": "charger" if snapshot.composite_limit_a is not None else "calculated",
             "restored_unconfirmed": snapshot.limits_restored,
+            "schedule": _schedule_entries(snapshot),
         }
 
 

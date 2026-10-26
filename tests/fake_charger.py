@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -28,6 +29,11 @@ class FakeCharger:
         # Answer GetCompositeSchedule by itself: with an error, or with this limit in amperes when it is set.
         self.answer_composite = True
         self.composite_limit: float | None = None
+        # For a request that looks a day ahead: the periods to answer with, as (offset in seconds, amperes).
+        self.composite_periods: list[tuple[int, float]] | None = None
+        # A charger that cannot answer a request for a whole day, only for the present moment.
+        self.refuse_long_composite = False
+        self.composite_calls = 0
         self._results: dict[str, asyncio.Future[list[Any]]] = {}
         self._connection: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -91,6 +97,18 @@ class FakeCharger:
 
     # The answer to a GetCompositeSchedule: the limit that was set for it, or a CALLERROR as a charger without support.
     def _composite_reply(self, frame: list[Any]) -> list[Any]:
+        if frame[3].get("duration", 0) > 3600 and self.refuse_long_composite:
+            return [4, frame[1], "NotSupported", "", {}]
+        if frame[3].get("duration", 0) > 3600 and self.composite_periods is not None:
+            periods = [{"startPeriod": offset, "limit": limit} for offset, limit in self.composite_periods]
+            schedule = {"chargingRateUnit": "A", "chargingSchedulePeriod": periods}
+            body = {
+                "status": "Accepted",
+                "connectorId": 1,
+                "scheduleStart": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "chargingSchedule": schedule,
+            }
+            return [3, frame[1], body]
         if self.composite_limit is None:
             return [4, frame[1], "NotSupported", "", {}]
         schedule = {
@@ -106,6 +124,7 @@ class FakeCharger:
             async for message in self._connection:
                 frame = json.loads(message)
                 if frame[0] == 2 and frame[2] == "GetCompositeSchedule" and self.answer_composite:
+                    self.composite_calls += 1
                     # The hub reads the limit in effect after every write. Most tests are not about that, so it is
                     # answered at once, as a charger that cannot do it would; a test sets composite_limit to see it.
                     await self._connection.send(json.dumps(self._composite_reply(frame)))

@@ -53,6 +53,22 @@ Two parties can limit a charger: Home Assistant (the charge limit number) and th
 - **`_limit_in_effect`** shows the limit that applies now. After every change the hub asks the charger what is in effect (`GetCompositeSchedule`, a read) and shows its answer (`source: charger`); a charger that cannot say leaves the lowest of the limits the hub knows (`source: calculated`).
 - **Saved in Home Assistant.** The limits survive a restart: the number and `_limit_in_effect` show them again as soon as the charger connects, before it has said anything. A profile that belongs to one charge ends with that charge and is not kept. A restored limit is marked `restored_unconfirmed` until the charger confirms it: when the charger answers the composite schedule, a stored limit that it does not show is dropped (the charger may have rebooted, or the vendor may have changed it), and while it is unconfirmed the vendor is not told about it. A charger that cannot answer leaves the stored value shown with that mark, so check it in the vendor app or set the limit again. A charge profile or a changed charge also clears what the charger reported before, so a pause that ended with its charge does not linger.
 
+## Schedule
+
+The charger's own schedule for the next 24 hours is read after every change and shown as the `schedule` attribute of `_limit_in_effect`: a list of `from` (a time) and `limit_a`, so you see what it will actually do. The attribute is not kept in the database.
+
+To set a schedule, use the service `ocpp_hub.set_schedule` (Developer tools, Actions), with `periods`: a list of a time of the day and the limit that applies from then on, for example
+
+```yaml
+action: ocpp_hub.set_schedule
+data:
+  periods:
+    - {time: "00:00", limit: 6}
+    - {time: "07:00", limit: 16}
+```
+
+The first period starts at 00:00 and the times increase. Every limit obeys the single limit rules: it stays under your ceiling, and under 6 A it pauses the charger. The hub installs it as one recurring daily profile that starts at midnight local time. It replaces the single charge limit, which uses the same profile; setting a charge limit replaces the schedule, and the *Clear charge limit* button removes either. Because the charger counts from a fixed point in UTC, the change between summer and winter time moves the schedule by an hour until you set it again. The charger accepting a schedule does not prove that it follows it; the attribute above shows what it reports, and the first night will show the rest.
+
 ## Vendor mirror
 
 Open the integration's options and fill in:

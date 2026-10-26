@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from . import commands
 from .session import CallError, CallRejectedError, ChargerSession
@@ -68,6 +70,27 @@ def _purposes(transaction_id: int | None, learned: str | None) -> list[tuple[str
     return ladder
 
 
+# The longest schedule the hub installs, and the seconds in a day (a daily schedule has no period at or after it).
+MAX_SCHEDULE_PERIODS = 24
+SECONDS_PER_DAY = 86400
+
+
+# Check a daily schedule given as (seconds after the start of the day, wished current) and return it with every current
+# turned into what is sent: the first period must start at 0, starts must grow and stay within the day, and every
+# current obeys the same rules as a single limit (the ceiling, and under 6 A meaning pause). Nothing is repaired.
+def checked_schedule(periods: Sequence[tuple[int, object]], policy: ControlPolicy) -> list[tuple[int, float]]:
+    if not 1 <= len(periods) <= MAX_SCHEDULE_PERIODS:
+        raise ControlError("invalid_schedule", f"a schedule has 1 to {MAX_SCHEDULE_PERIODS} periods")
+    checked: list[tuple[int, float]] = []
+    for start, wish in periods:
+        if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start < SECONDS_PER_DAY:
+            raise ControlError("invalid_schedule", f"{start!r} is not a time of the day")
+        if (not checked and start != 0) or (checked and start <= checked[-1][0]):
+            raise ControlError("invalid_schedule", "the first period starts at 00:00 and the starts must increase")
+        checked.append((start, effective_current_a(wish, policy)))
+    return checked
+
+
 # The current to ask the charger for: the wish, or zero (pause) when the wish is below what a car needs to charge.
 # The wish is checked, not repaired: a number above the ceiling, not a number, or negative is refused.
 def effective_current_a(wish: object, policy: ControlPolicy) -> float:
@@ -118,6 +141,34 @@ class ChargerControl:
                 )
                 return amps
         _LOGGER.warning("[write] Charge limit %s A refused by %s: %s", amps, self._session.cp_id, ", ".join(outcomes))
+        raise ControlError("rejected", ", ".join(outcomes))
+
+    # Install a daily schedule: a recurring profile that starts at `anchor` (the start of today, local time) and repeats
+    # every 24 hours. It replaces the hub's single limit, which uses the same profile id. The station-wide purpose is
+    # tried first, then the default one; a charge profile cannot recur, so it is not used. Returns the schedule as sent.
+    async def set_daily_schedule(
+        self, anchor: datetime, periods: Sequence[tuple[int, object]]
+    ) -> list[tuple[int, float]]:
+        schedule = checked_schedule(periods, self._policy)
+        anchor_iso = anchor.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        learned = self._session.snapshot.limit_purpose
+        ladder = [
+            (commands.PURPOSE_CHARGE_POINT_MAX, STATION_CONNECTOR),
+            (commands.PURPOSE_TX_DEFAULT, SOCKET_CONNECTOR),
+        ]
+        if learned is not None:
+            ladder.sort(key=lambda step: step[0] != learned)
+        outcomes: list[str] = []
+        for purpose, connector_id in ladder:
+            payload = commands.set_charging_schedule(connector_id, purpose, schedule, HUB_PROFILE_ID, anchor_iso)
+            status = await self._ask("SetChargingProfile", payload)
+            outcomes.append(f"{purpose}={status}")
+            if status == "Accepted":
+                self._session.record_limit(None, purpose)
+                self._session.request_effective_limit()
+                _LOGGER.info("[write] Daily schedule %s accepted by %s as %s", schedule, self._session.cp_id, purpose)
+                return schedule
+        _LOGGER.warning("[write] Daily schedule refused by %s: %s", self._session.cp_id, ", ".join(outcomes))
         raise ControlError("rejected", ", ".join(outcomes))
 
     # Remove the hub's own limit again, so the charger goes back to what it had.

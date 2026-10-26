@@ -150,6 +150,41 @@ def _composite_limit(answer: dict[str, Any]) -> float | None:
     return limit if limit is not None and 0 <= limit <= MAX_STORED_LIMIT_A else None
 
 
+# How far ahead the schedule is read, in seconds, and the most periods of it that are kept.
+SCHEDULE_HORIZON_S = 86400
+MAX_SCHEDULE_PERIODS = 48
+# A schedule reaches at most a week ahead, and its start may differ from the hub's clock by at most two days; anything
+# else is not a schedule the hub can trust or show.
+MAX_SCHEDULE_OFFSET_S = 7 * 86400
+MAX_SCHEDULE_SKEW_S = 2 * 86400
+
+
+# The start and the periods of a GetCompositeSchedule answer, as (seconds after the start, amperes). An answer that is
+# not accepted, not in amperes or with unusable periods gives nothing. The start is the one the charger names, or now.
+def _composite_schedule(answer: dict[str, Any], now: datetime) -> tuple[datetime | None, tuple[tuple[int, float], ...]]:
+    schedule = answer.get("chargingSchedule")
+    raw = schedule.get("chargingSchedulePeriod") if isinstance(schedule, dict) else None
+    if answer.get("status") != "Accepted" or not isinstance(schedule, dict) or not isinstance(raw, list):
+        return None, ()
+    if schedule.get("chargingRateUnit") not in (None, "A") or len(raw) > MAX_SCHEDULE_PERIODS:
+        return None, ()
+    periods: list[tuple[int, float]] = []
+    for period in raw:
+        offset = period.get("startPeriod") if isinstance(period, dict) else None
+        limit = _finite(period.get("limit")) if isinstance(period, dict) else None
+        if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= MAX_SCHEDULE_OFFSET_S:
+            return None, ()
+        if periods and offset <= periods[-1][0]:
+            return None, ()
+        if limit is None or not 0 <= limit <= MAX_STORED_LIMIT_A:
+            return None, ()
+        periods.append((offset, limit))
+    start = parse_timestamp(answer.get("scheduleStart") or schedule.get("startSchedule"), now)
+    if abs((start - now).total_seconds()) > MAX_SCHEDULE_SKEW_S:
+        return None, ()
+    return start, tuple(periods)
+
+
 # A text the charger sent, cut to MAX_TEXT; None when it is not a string or is empty.
 # The port has no authentication and the history is never truncated, so no charger-supplied text is kept unbounded.
 def _text(value: object) -> str | None:
@@ -195,6 +230,9 @@ class ChargerSession:
         self._tasks: set[asyncio.Task[None]] = set()
         # The setup that is running for this connection, so another boot does not start a second one.
         self._setup_task: asyncio.Task[None] | None = None
+        # The read of the limit in effect that is running, and whether another was asked for while it ran.
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_again = False
         # Metering settings the charger rejected on this connection; they are not offered again.
         self._rejected_keys: set[str] = set()
         # Charges that were running when the charger's previous connection ended, so a stop after a reconnect still
@@ -253,6 +291,9 @@ class ChargerSession:
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(CallError("connection closed"))
+                    # A caller that was cancelled with the connection never reads this error; reading it here keeps
+                    # the event loop from reporting it as an exception nobody retrieved.
+                    future.exception()
             self._snapshot = replace(self._snapshot, connected=False)
             self._listener.on_snapshot(self._snapshot)
             self._listener.on_disconnected(self.cp_id)
@@ -336,7 +377,42 @@ class ChargerSession:
     # Ask for the limit in effect in a task of its own, so a charger that answers slowly or never does not hold up the
     # write or the command that caused the question.
     def request_effective_limit(self) -> None:
-        self._start_task(self.refresh_effective_limit())
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_again = True
+            return
+        self._refresh_task = self._start_task(self._refresh_loop())
+
+    # Read until nobody asked again meanwhile. Requests that come in while a read is running (a flood of vendor
+    # commands, say) are folded into one more read afterwards, so the number of reads stays small.
+    async def _refresh_loop(self) -> None:
+        while True:
+            self._refresh_again = False
+            await self._refresh_limit_and_schedule()
+            if not self._refresh_again:
+                return
+
+    # Read the limit in effect first, then the schedule for the next 24 hours. They are separate questions on purpose: a
+    # charger that refuses the long one must not cost the answer to the short one.
+    async def _refresh_limit_and_schedule(self) -> None:
+        await self.refresh_effective_limit()
+        await self.refresh_schedule()
+
+    # Ask the charger for its schedule over the next 24 hours and keep it. A read; a charger that cannot answer leaves
+    # the schedule empty.
+    async def refresh_schedule(self) -> None:
+        start: datetime | None = None
+        periods: tuple[tuple[int, float], ...] = ()
+        try:
+            answer = await self.call(
+                "GetCompositeSchedule", commands.get_composite_schedule(PRIMARY_CONNECTOR, SCHEDULE_HORIZON_S)
+            )
+        except CallError as error:
+            _LOGGER.info("[read] %s could not tell its schedule: %s", self.cp_id, error)
+        else:
+            start, periods = _composite_schedule(answer, self._clock())
+            _LOGGER.info("[read] %s reports %s schedule period(s) for the next day", self.cp_id, len(periods))
+        if self._snapshot.connected:
+            self._update(schedule_start=start, schedule_periods=periods)
 
     # Ask the charger what limit is in effect now and keep the answer. It is a read, and a charger that does not support
     # it (or does not answer) simply leaves the limit unknown: the hub then shows the lowest of the limits it knows.

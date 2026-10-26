@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+from datetime import time
 from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
 from .const import (
     BIND_HOST,
@@ -26,7 +29,9 @@ from .const import (
     PACKAGE_LOGGER,
     RETIRED_ENTITY_KEYS,
     SERVICE_GET_SESSIONS,
+    SERVICE_SET_SCHEDULE,
 )
+from .control import run_write
 from .core.central import CentralSystem
 from .core.control import CHARGING_MIN_A, ControlPolicy
 from .core.mirror import VendorMirror
@@ -53,6 +58,29 @@ GET_SESSIONS_SCHEMA = vol.Schema(
 )
 
 
+# A limit from the service call as a float; text, nan or a number too big to be one is refused with a normal error.
+def _limit_value(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError) as error:
+        raise vol.Invalid("the limit must be a number") from error
+
+
+SET_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("charger_id"): str,
+        vol.Required("periods"): vol.All(
+            [{vol.Required("time"): cv.time, vol.Required("limit"): _limit_value}], vol.Length(min=1, max=24)
+        ),
+    }
+)
+
+
+# The seconds after midnight of a time of the day.
+def _seconds_of_day(moment: time) -> int:
+    return moment.hour * 3600 + moment.minute * 60 + moment.second
+
+
 # Register the service that returns the charge history. It lives at the integration level, so it exists as soon as
 # Home Assistant has loaded the integration, and it answers with data instead of changing anything.
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -64,9 +92,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         sessions = entries[0].runtime_data.sessions.newest_first(call.data.get("charger_id"), call.data.get("limit"))
         return {"sessions": [session.to_dict() for session in sessions]}
 
+    # Install a daily schedule on a charger: from each time of the day on, that current. The day starts at midnight
+    # local time. The charger named, or the only one that has booted, is written to under the owner's ceiling.
+    async def set_schedule(call: ServiceCall) -> None:
+        entries = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_hub_loaded")
+        runtime = entries[0].runtime_data
+        cp_id = call.data.get("charger_id") or (
+            runtime.listener.announced[0] if len(runtime.listener.announced) == 1 else None
+        )
+        if cp_id is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="charger_not_chosen")
+        periods = [(_seconds_of_day(p["time"]), p["limit"]) for p in call.data["periods"]]
+        anchor = dt_util.start_of_local_day()
+        await run_write(runtime, cp_id, lambda control: control.set_daily_schedule(anchor, periods))
+
     hass.services.async_register(
         DOMAIN, SERVICE_GET_SESSIONS, get_sessions, schema=GET_SESSIONS_SCHEMA, supports_response=SupportsResponse.ONLY
     )
+    hass.services.async_register(DOMAIN, SERVICE_SET_SCHEDULE, set_schedule, schema=SET_SCHEDULE_SCHEMA)
     return True
 
 
