@@ -54,6 +54,7 @@ CONFIG_KEYS = [
     "NumberOfConnectors",
     "ChargeProfileMaxStackLevel",
     "ChargingScheduleAllowedChargingRateUnit",
+    "ChargingScheduleMaxPeriods",
 ]
 
 

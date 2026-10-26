@@ -109,7 +109,9 @@ async def test_empty_password_keeps_the_stored_one(hass: HomeAssistant) -> None:
     entry = _entry(hass, stored)
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     suggested = {
-        str(key): key.description.get("suggested_value") for key in flow["data_schema"].schema if key.description
+        str(key): key.description["suggested_value"]
+        for key in flow["data_schema"].schema
+        if key.description and key.description.get("suggested_value") is not None
     }
 
     result = await hass.config_entries.options.async_configure(
