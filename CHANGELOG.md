@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: a window the app switches off (instead of removing it) is left out of the plan, so taking a day out of the plan in the app works.
+
 - Fix: the app's planning question is answered before the limit on waiting vendor commands (the app opens with a burst of commands and the planning question was turned away with the rest); the limit is 16 instead of 4.
 
 - Fix: the weekday byte of the app's planning is a day mask (Monday 1, Tuesday 2, Wednesday 4 ...), not a day number. The plan the hub answers now shows on the right days in the app, and a window for several days is read as one window per day.

@@ -6,8 +6,8 @@ It was worked out from captured exchanges, not from documentation, so only what 
     check   = the XOR of every other byte of the frame
     head    = FE from the cloud, AA from the charger
     command A7 = the planning. Written with payload 01, count, then count windows of 12 bytes:
-        01, overnight flag, weekday mask (bit 0 = Monday ... bit 6 = Sunday), start (4 bytes, seconds after
-        midnight), end (same), 20.
+        enabled (01; 00 for a window that is switched off), overnight flag, weekday mask (bit 0 = Monday ... bit 6 =
+        Sunday), start (4 bytes, seconds after midnight), end (same), 20.
         Read with payload 00; an empty plan answers 00 00. A write is acknowledged with the single byte 00.
 """
 
@@ -92,13 +92,15 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
             int.from_bytes(payload[offset + 7 : offset + 11], "little"),
             payload[offset + 11],
         )
-        if enabled != 1 or tail != 0x20 or not 1 <= day_mask <= 0x7F or max(start, end) > SECONDS_PER_DAY:
+        if enabled not in (0, 1) or tail != 0x20 or not 1 <= day_mask <= 0x7F or max(start, end) > SECONDS_PER_DAY:
             raise FrameError("a window is not one the hub understands")
         # The app marks the days with a mask (Wednesday is 4, not 3); a window for several days is one per day here.
         days = [PlanWindow(day, start, end) for day in range(1, 8) if day_mask >> (day - 1) & 1]
         if bool(overnight) != days[0].overnight:
             raise FrameError("the overnight flag does not agree with the times")
-        windows.extend(days)
+        # The app switches a window off instead of removing it: a disabled window is no part of the plan.
+        if enabled:
+            windows.extend(days)
     return windows
 
 
