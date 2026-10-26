@@ -39,11 +39,13 @@ class RaedianFrame:
 
 @dataclass(frozen=True, slots=True)
 class PlanWindow:
-    """One window of the planning: a weekday (1 is Monday) and the seconds after midnight it starts and ends."""
+    """One window of the planning: a weekday (1 is Monday), the seconds after midnight it starts and ends, and whether
+    the app has it switched on. A switched-off window is kept so the app finds it again, but the charger ignores it."""
 
     weekday: int
     start_s: int
     end_s: int
+    enabled: bool = True
 
     @property
     def overnight(self) -> bool:
@@ -95,12 +97,10 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
         if enabled not in (0, 1) or tail != 0x20 or not 1 <= day_mask <= 0x7F or max(start, end) > SECONDS_PER_DAY:
             raise FrameError("a window is not one the hub understands")
         # The app marks the days with a mask (Wednesday is 4, not 3); a window for several days is one per day here.
-        days = [PlanWindow(day, start, end) for day in range(1, 8) if day_mask >> (day - 1) & 1]
+        days = [PlanWindow(day, start, end, bool(enabled)) for day in range(1, 8) if day_mask >> (day - 1) & 1]
         if bool(overnight) != days[0].overnight:
             raise FrameError("the overnight flag does not agree with the times")
-        # The app switches a window off instead of removing it: a disabled window is no part of the plan.
-        if enabled:
-            windows.extend(days)
+        windows.extend(days)
     return windows
 
 
@@ -108,7 +108,7 @@ def decode_plan(payload: bytes) -> list[PlanWindow]:
 def encode_plan(windows: list[PlanWindow]) -> bytes:
     payload = bytes([1, len(windows)])
     for window in windows:
-        payload += bytes([1, int(window.overnight), 1 << (window.weekday - 1)])
+        payload += bytes([int(window.enabled), int(window.overnight), 1 << (window.weekday - 1)])
         payload += window.start_s.to_bytes(4, "little") + window.end_s.to_bytes(4, "little") + b"\x20"
     return payload
 

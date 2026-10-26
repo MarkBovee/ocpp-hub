@@ -107,6 +107,8 @@ def plan_answer(session: bytes, windows: Sequence[PlanWindow]) -> dict[str, Any]
 def windows_to_blocks(windows: Sequence[PlanWindow]) -> dict[int, list[Block]]:
     blocks: dict[int, list[Block]] = {}
     for window in windows:
+        if not window.enabled:
+            continue
         day = window.weekday - 1
         if window.overnight:
             blocks.setdefault(day, []).append(Block(window.start_s, SECONDS_PER_DAY))

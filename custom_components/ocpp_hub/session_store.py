@@ -119,7 +119,9 @@ class PlanStore:
         records = stored.get("plans") if isinstance(stored, dict) else None
         for cp_id, windows in records.items() if isinstance(records, dict) else []:
             try:
-                self._plans[cp_id] = [PlanWindow(int(w[0]), int(w[1]), int(w[2])) for w in windows]
+                self._plans[cp_id] = [
+                    PlanWindow(int(w[0]), int(w[1]), int(w[2]), bool(w[3]) if len(w) > 3 else True) for w in windows
+                ]
             except KeyError, TypeError, ValueError, IndexError:
                 _LOGGER.warning("Skipping an unreadable plan in storage")
 
@@ -139,5 +141,7 @@ class PlanStore:
     # The plans as the JSON that is written.
     def _data(self) -> dict[str, Any]:
         return {
-            "plans": {cp: [[w.weekday, w.start_s, w.end_s] for w in windows] for cp, windows in self._plans.items()}
+            "plans": {
+                cp: [[w.weekday, w.start_s, w.end_s, w.enabled] for w in windows] for cp, windows in self._plans.items()
+            }
         }

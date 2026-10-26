@@ -252,7 +252,7 @@ class AppPlanSensor(OcppHubEntity, SensorEntity):
     def _windows(self) -> list[tuple[int, int, int]] | None:
         held = self._runtime.plans.plan(self._cp_id)
         if held is not None:
-            return [(w.weekday, w.start_s, w.end_s) for w in held]
+            return [(w.weekday, w.start_s, w.end_s) for w in held if w.enabled]
         seen = self._snapshot.app_plan
         return None if seen is None else list(seen)
 

@@ -497,7 +497,7 @@ class MirrorLink:
         except TypeError, ValueError, KeyError:
             return
         if windows is not None:
-            self._session.record_app_plan([(w.weekday, w.start_s, w.end_s) for w in windows])
+            self._session.record_app_plan([(w.weekday, w.start_s, w.end_s) for w in windows if w.enabled])
             if self._plan_handler is not None and self._plan_handler.plan(self.cp_id) is None:
                 self._plan_handler.imported(self.cp_id, windows)
 

@@ -60,6 +60,7 @@ def test_answers_carry_the_session_and_parse_back() -> None:
     ("windows", "blocks"),
     [
         ([MONDAY], {0: [Block(43200, 50400)]}),
+        ([PlanWindow(1, 43200, 50400, enabled=False)], {}),
         ([PlanWindow(1, 79200, 21600)], {0: [Block(79200, 86400)], 1: [Block(0, 21600)]}),
         ([PlanWindow(7, 79200, 21600)], {6: [Block(79200, 86400)], 0: [Block(0, 21600)]}),
     ],

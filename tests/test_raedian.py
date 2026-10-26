@@ -137,10 +137,12 @@ def test_the_weekday_byte_is_a_mask() -> None:
     ]
 
 
-# Intent: a window the app has switched off (first byte 00) is left out of the plan, the enabled one next to it stays;
-# this is the write the app sent when Wednesday was taken out of the plan.
-# Why: the app keeps a removed day as a disabled window, and refusing the message made the removal impossible.
-def test_a_disabled_window_is_not_part_of_the_plan() -> None:
+# Intent: a window the app has switched off (first byte 00) is kept as a disabled window next to the enabled one and
+# encodes back to the same bytes; this is the write the app sent when Wednesday was taken out of the plan.
+# Why: the app keeps a removed day as a disabled window and expects to find it in the answer; dropping it made the
+# plan look empty to the app.
+def test_a_disabled_window_is_kept_and_encodes_back() -> None:
     payload = bytes.fromhex("0102000004a08c0000c0a8000020010008e0c4000000e1000020")
 
-    assert decode_plan(payload) == [PlanWindow(4, 50400, 57600)]
+    assert decode_plan(payload) == [PlanWindow(3, 36000, 43200, enabled=False), PlanWindow(4, 50400, 57600)]
+    assert encode_plan(decode_plan(payload)) == payload
