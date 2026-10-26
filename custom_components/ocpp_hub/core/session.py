@@ -344,6 +344,11 @@ class ChargerSession:
         # own limit is certain now; the vendor's restored one stays marked until the charger confirms it.
         self._update(charge_limit_a=amps, limit_purpose=purpose, composite_limit_a=None, hub_limit_restored=False)
 
+    # Keep the planning that the Raedian app set in the charger, as the windows it wrote or the charger answered.
+    def record_app_plan(self, windows: list[tuple[int, int, int]]) -> None:
+        if self._snapshot.connected:
+            self._update(app_plan=tuple(windows))
+
     # Remember the limit of a command from the vendor that the charger accepted, with the id and purpose of its profile.
     # A vendor limit of None means the vendor's profile is gone.
     def record_vendor_limit(self, amps: float | None, profile_id: int | None, purpose: str | None) -> None:

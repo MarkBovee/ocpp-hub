@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import ssl
 import uuid
@@ -48,6 +49,7 @@ from .mirror_queue import (
     is_integer,
 )
 from .mirror_rewrite import StartPairing, translate_for_vendor
+from .raedian import plan_from_exchange
 from .session import CallError, CallRejectedError, ChargerSession
 from .txid_map import TransactionIdMap
 
@@ -428,6 +430,7 @@ class MirrorLink:
             "[forward] Vendor %s for %s passed on; the charger answered %s", action, self.cp_id, answer.get("status")
         )
         if action == "DataTransfer":
+            self._note_plan(plan.payload, answer)
             # A vendor-specific message the hub cannot judge: what was asked and what the charger said are both logged.
             _LOGGER.info("[forward] DataTransfer request for %s: %s", self.cp_id, plain_text(str(plan.payload), 1500))
             _LOGGER.info("[forward] DataTransfer answer of %s: %s", self.cp_id, plain_text(str(answer), 1500))
@@ -436,6 +439,18 @@ class MirrorLink:
         if answer.get("status") == "Accepted":
             self._note_accepted(action, plan.payload)
         await self._send_to_vendor(connection, build_call_result(unique_id, answer))
+
+    # If this DataTransfer was a planning exchange of the Raedian app that parses completely, keep the plan it shows.
+    # The data are JSON with the hex of the protocol frame in `originalData`; anything that does not fit is ignored.
+    def _note_plan(self, request: dict[str, Any], answer: dict[str, Any]) -> None:
+        try:
+            asked = json.loads(request.get("data") or "")["originalData"]
+            answered = json.loads(answer.get("data") or "")["originalData"]
+            windows = plan_from_exchange(asked, answered)
+        except TypeError, ValueError, KeyError:
+            return
+        if windows is not None:
+            self._session.record_app_plan([(w.weekday, w.start_s, w.end_s) for w in windows])
 
     # Take over what an accepted command of the vendor changed on the charger: the vendor's limit for a profile it set
     # or cleared, and the hub's own limit when a clear without an id (or by filters) could have removed that as well.

@@ -127,6 +127,9 @@
       },
       "limit_in_effect": {
         "name": "Limit in effect"
+      },
+      "app_plan": {
+        "name": "Charging plan (app)"
       }
     },
     "binary_sensor": {

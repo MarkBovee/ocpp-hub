@@ -112,6 +112,9 @@ class ChargerSnapshot:
     # that schedule starts. Empty when the charger did not say.
     schedule_start: datetime | None = None
     schedule_periods: tuple[tuple[int, float], ...] = ()
+    # The planning windows the Raedian app has set in the charger, as (weekday 1-7, start, end in seconds after
+    # midnight); None until the app has written or read it on this connection.
+    app_plan: tuple[tuple[int, int, int], ...] | None = None
     # True while the hub's (or the vendor's) limit above comes from storage and the charger has not confirmed it: the
     # charger may have lost it (a reboot) or the vendor may have changed it while Home Assistant was down.
     hub_limit_restored: bool = False

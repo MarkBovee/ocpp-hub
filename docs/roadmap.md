@@ -31,6 +31,8 @@ Home Assistant is the real local OCPP 1.6 backend of a Raedian NEO 22 kW, shows 
 
 ## Open
 
+- [ ] Set the planning of the Raedian app from Home Assistant. The `a7` write is understood (windows of 12 bytes, XOR check byte), but a write needs the 8-byte session that the cloud's login (`fe`, 130 bytes of unknown content) opens with the charger. First find out whether the charger accepts a read with the last session or with an empty one; the owner must agree to every message the hub sends on its own.
+
 - [ ] Check the vendor side of a real charge: that the status changes and the charge show up in the Raedian app, and what the vendor sends back.
 - [ ] Read the raw frames of a charge (logger `custom_components.ocpp_hub.frames` at debug) to see every measurand and field the NEO sends, and decide from that which further entities are worth making.
 - [ ] Measure a full restart of Home Assistant (a reload is measured: 14 seconds).
