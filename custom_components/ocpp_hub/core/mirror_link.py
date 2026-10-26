@@ -461,7 +461,12 @@ class MirrorLink:
         if handler is None or kind is None:
             return False
         if isinstance(kind, PlanUnreadable):
-            _LOGGER.warning("[plan] The app's planning message for %s was refused: %s", self.cp_id, kind.reason)
+            _LOGGER.warning(
+                "[plan] The app's planning message for %s was refused: %s; it said %s",
+                self.cp_id,
+                kind.reason,
+                plain_text(str(payload.get("data")), 600),
+            )
             await self._send_to_vendor(connection, build_call_result(unique_id, {"status": "Rejected"}))
             return True
         if isinstance(kind, PlanWrite):
