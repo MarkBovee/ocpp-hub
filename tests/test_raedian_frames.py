@@ -11,11 +11,11 @@ frames = load_tool("raedian_frames")
 LOG = "\n".join(
     [
         "2026-10-26 09:51:35.256 INFO [forward] DataTransfer answer of CP: "
-        + """{'status': 'Accepted', 'data': '{"originalData": "AAB0000004000870E33DDE46E9B0FCB29614DF6A"}'}""",
+        + """{'status': 'Accepted', 'data': '{"originalData": "AAB00000040008700123456789ABCDBE9614DF6A"}'}""",
         "2026-10-26 09:51:35.256 INFO [forward] DataTransfer request for CP: "
-        + """{'data': '{"instructType":"b0","originalData":"feb0000005000828e33dde46e9b0fcb29614df6a0d"}'}""",
+        + """{'data': '{"instructType":"b0","originalData":"feb00000050008280123456789abcdbe9614df6a0d"}'}""",
         "2026-10-26 10:04:27.718 WARNING [plan] refused: x; it said "
-        + """{"instructType":"a7","originalData":"fea700001a000895e33dde46e9b0fcb2"""
+        + """{"instructType":"a7","originalData":"fea700001a0008950123456789abcdbe"""
         + """0102000004a08c0000c0a8000020010008e0c4000000e1000020"}""",
         "not a frame line",
     ]

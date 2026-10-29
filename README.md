@@ -1,126 +1,222 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/MarkBovee/ocpp-hub/main/docs/images/logo.svg" alt="OCPP Hub" width="420">
+</p>
+
+<p align="center">
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS custom repository"></a>
+  <a href="https://github.com/MarkBovee/ocpp-hub/releases"><img src="https://img.shields.io/github/v/release/MarkBovee/ocpp-hub?include_prereleases" alt="Latest release"></a>
+  <a href="https://github.com/MarkBovee/ocpp-hub/actions/workflows/ci.yml"><img src="https://github.com/MarkBovee/ocpp-hub/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/MarkBovee/ocpp-hub" alt="License"></a>
+</p>
+
 # OCPP Hub
 
-A Home Assistant integration that acts as the local OCPP 1.6 backend of your EV charger, and can pass a read-only copy of everything the charger says on to the manufacturer's own backend.
+OCPP Hub turns Home Assistant into the local OCPP 1.6 backend of your EV charger. Home Assistant sees and controls the
+charger directly, and the manufacturer's cloud can still get a copy of everything the charger says, so the vendor app
+keeps working next to Home Assistant.
 
-> **Status: early.** The OCPP server, the entities and the vendor mirror run against a real Raedian NEO, and the Raedian app shows the charger online through the mirror. Charging with a car has not been observed yet, so what the charger sends during a charge is untested. Nothing writes to a charger apart from two metering settings: there are no limit or start/stop controls. The changelog says what each release really does.
+A charger talks to one OCPP backend at a time. Point it at Home Assistant and the manufacturer's app goes dark; leave
+it on the manufacturer's cloud and Home Assistant can only watch. OCPP Hub sits in between: the charger connects to
+Home Assistant, and the hub keeps the vendor's backend informed on the side.
 
-## Why
+> **Status: early (0.x).** Built and tested against a Raedian NEO 22 kW. Other OCPP 1.6J chargers should work for the
+> standard parts (status, metering, limits, start and stop), but have not been tried. The [changelog](CHANGELOG.md)
+> says what each release really does, and [docs/roadmap.md](docs/roadmap.md) what is proven and what is not yet.
 
-A charger talks to one OCPP backend at a time. Point it at Home Assistant and the manufacturer's app goes dark; leave it on the manufacturer's cloud and Home Assistant can only watch. OCPP Hub is the backend that Home Assistant controls, and it keeps the manufacturer's backend informed on the side, so charging sessions still show up in the vendor app while load balancing and price-based charging run locally.
+## Features
 
-## What it does
+- **Local OCPP 1.6J server** on a port you choose. No cloud service of ours is involved.
+- **Live entities** for status, power, energy, current and voltage per phase, offered current, plugged in, charging,
+  problem and connection.
+- **Control** with a charge limit (A per phase) under a ceiling you set, and a switch to start or stop a charge.
+- **Charge history** kept without limit in Home Assistant, with the running charge shown live.
+- **Schedules and a charging plan**: windows per weekday in which the charger may charge, set from Home Assistant, from
+  a schedule helper, or from the Raedian app, and shown as a Home Assistant **calendar**.
+- **Vendor mirror**: a copy of the charger's traffic goes to the manufacturer's backend, so the vendor app shows the
+  charger online with its sessions. Commands from the vendor are refused unless you allow them, and then always under
+  your ceiling.
 
-- Accepts the charger on a port you choose and shows its status, power, per-phase current, energy and connection as entities.
-- Optionally passes a read-only copy of everything the charger says to the vendor's backend, where the charger shows up as a virtual charge point. The vendor app keeps its sessions and meter values; by default the vendor's commands are refused by the hub and never reach the charger; you can choose to pass them on (see below).
-- Keeps the history of every charge (energy, peak power, duration, tag, stop reason) without limit, and shows the running charge live. See [docs/dashboard.md](docs/dashboard.md) for a ready dashboard.
-- Stays local: no cloud service of ours is involved.
+## Supported chargers
 
-## Control
+| Charger | Status |
+|---------|--------|
+| Raedian NEO (22 kW) | Tested: entities, limits, start and stop, vendor mirror, the Raedian app's planning |
+| Other OCPP 1.6J chargers | Expected to work for the standard OCPP parts; not tested. Reports are welcome. |
 
-Two entities write to the charger, both only when you use them:
+OCPP 2.0.1 is not supported.
 
-- `number.ocpp_hub_<charger id>_charge_limit` sets the current per phase, from 0 to the ceiling in the options (default 16 A, never above what you set there). A value under 6 A is sent as 0 A, because a car does not charge under 6 A: it pauses the charger. The hub tries a station-wide `ChargePointMaxProfile` first, then `TxProfile` while a charge runs, then `TxDefaultProfile`, and remembers which one the charger accepted. The number shows what the charger last accepted on this connection; the charger is not asked what it holds, so after a reconnect it shows nothing until you set the limit again.
-- `switch.ocpp_hub_<charger id>_charging` starts a charge (`RemoteStartTransaction`, tag `OCPPHUB`) or stops the running one (`RemoteStopTransaction`). A start works only with a car connected; the charger refuses otherwise and Home Assistant says so.
+## Install
 
-Whether a charger really obeys a charging profile is proven only by watching a charge; the NEO has not been seen doing it yet. Every write is logged with the prefix `[write]`.
+### HACS (recommended)
 
-## What happens when a charger connects
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MarkBovee&repository=ocpp-hub&category=integration)
 
-The hub answers the charger and creates a device and its entities once the charger has sent its `BootNotification`. A charger that reconnects after Home Assistant restarted often sends neither a boot nor a status, so after fifteen seconds the hub asks for them with `TriggerMessage`. It then reads a few configuration keys, one key per request because some chargers ignore a request that names several, and makes sure the charger reports the meter values the entities need (`MeterValuesSampledData` and `MeterValueSampleInterval`; those two are the only things the hub writes to a charger). Home Assistant shows a notification with the charger's manufacturer, type, firmware, serial number and OCPP version.
+1. In HACS, add `https://github.com/MarkBovee/ocpp-hub` as a custom repository of type *Integration* (or use the
+   button above).
+2. Download **OCPP Hub** and restart Home Assistant.
+3. Add the integration under *Settings, Devices & services* and choose the port (default 9000).
 
-When the integration stops, the hub drops the charger's connections instead of closing them. The Raedian NEO stays away for minutes after a proper close, whatever the close code, and is back within about half a minute after a connection that simply vanishes.
+[![Open your Home Assistant instance and start setting up OCPP Hub.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ocpp_hub)
+
+### Manual
+
+Copy `custom_components/ocpp_hub` into the `custom_components` folder of your Home Assistant configuration and restart.
+
+Home Assistant 2026.10 or newer is required.
+
+## Connect a charger
+
+In the charger's OCPP settings, set the backend address to `ws://<Home Assistant IP>:<port>`. Most chargers add their
+own id to that address. The port has no authentication, so keep it on a trusted network and never forward it to the
+internet.
+
+Raedian NEO: the OCPP profile (address and `ChargePointSerialNumber`) is set in the RAEDIAN Install app, which is meant
+for certified installers.
+
+When the charger connects, Home Assistant creates a device with its entities and shows a notification with the
+manufacturer, model, firmware and serial number.
 
 ## Entities
 
-A charger gets a device once it has sent its `BootNotification`. The entity ids are fixed by a key, not by the language of your instance: `sensor.ocpp_hub_<charger id>_status`, `_power`, `_energy` (kWh, total increasing), `_current_l1` to `_current_l3`, `_current_offered`, `_model`, `_firmware`, the diagnostic `_error_code`, and `binary_sensor.ocpp_hub_<charger id>_connected`, `_plugged_in` (a car is connected), `_car_charging` (the socket is delivering) and `_problem` (a faulted status or an error code other than no error). The last three come from the status and error code the charger already reports; they are unknown until the first status. The voltage sensors (`_voltage_l1` to `_voltage_l3`) exist but are switched off until you enable them. While the socket is known not to deliver (any status except charging), power and the phase currents read 0 instead of unknown, because nothing flows; a phase that the meter leaves out while it reports others also reads 0. While the charger is not connected its sensors show as unavailable and the connected sensor turns off.
+Entity ids are fixed by a key, not by the language of your instance. `<id>` is the charger's id in lower case.
 
-The NEO sends a reading with only the energy register on the clock (at 12:00, 12:30 and so on). The hub keeps what such a partial reading does not carry, so power and currents do not vanish for a moment.
+| Entity | What it shows or does |
+|--------|-----------------------|
+| `sensor.ocpp_hub_<id>_status` | The connector status (available, preparing, charging, ...) |
+| `sensor.ocpp_hub_<id>_power`, `_energy` | Power (W) and the energy meter (kWh, total increasing) |
+| `sensor.ocpp_hub_<id>_current_l1` ... `_l3`, `_current_offered` | Current per phase and the current the charger offers |
+| `sensor.ocpp_hub_<id>_voltage_l1` ... `_l3` | Voltage per phase (disabled by default) |
+| `sensor.ocpp_hub_<id>_current_session`, `_last_session` | The running charge and the latest finished one, with details as attributes |
+| `sensor.ocpp_hub_<id>_limit_in_effect` | The limit that applies now and the charger's schedule for the next day |
+| `sensor.ocpp_hub_<id>_app_plan` | The charging plan: number of windows, the windows, and whether the planning is on |
+| `calendar.ocpp_hub_<id>_charging_plan` | The charging plan as repeating calendar events |
+| `binary_sensor.ocpp_hub_<id>_connected`, `_plugged_in`, `_car_charging`, `_problem` | Connection and socket state |
+| `number.ocpp_hub_<id>_charge_limit` | Sets the current per phase (0 to your ceiling; under 6 A pauses) |
+| `switch.ocpp_hub_<id>_charging` | Starts or stops a charge |
+| `button.ocpp_hub_<id>_clear_charge_limit`, `_apply_schedule` | Removes the hub's limit; writes the schedule helper to the charger |
+| `sensor.ocpp_hub_<id>_model`, `_firmware`, `_error_code`, `_mirror_status`, `_mirror_queue` | Diagnostics |
 
-To see exactly what a charger sends, set the logger `custom_components.ocpp_hub.frames` to `debug` (Developer tools, Actions, `logger.set_level`). Every OCPP frame, in both directions, is then written to the log; it can hold id tags and serial numbers, so leave it off otherwise.
+While the socket is not delivering, power and currents read 0 instead of unknown. While the charger is not connected,
+its sensors are unavailable and `_connected` is off.
+
+A ready dashboard is in [docs/dashboard.md](docs/dashboard.md).
+
+## Control and safety
+
+- **Ceiling.** The options hold a current ceiling (default 16 A). Nothing the hub or the vendor sends goes above it.
+  Set it at or below what your installer configured; the hub never raises the charger's own hardware limit.
+- **Charge limit.** The number sends a charging profile. The hub tries a station-wide `ChargePointMaxProfile` first,
+  then `TxProfile` while a charge runs, then `TxDefaultProfile`, and remembers which one the charger accepted. A value
+  under 6 A is sent as 0 A: a car does not charge below 6 A, so it pauses.
+- **Start and stop.** The switch sends `RemoteStartTransaction` (tag `OCPPHUB`) or `RemoteStopTransaction`. A start
+  needs a car connected.
+- **Limit in effect.** After every change the hub asks the charger what it really applies (`GetCompositeSchedule`) and
+  shows that. Limits survive a restart of Home Assistant and are marked `restored_unconfirmed` until the charger
+  confirms them.
+
+Every write to the charger is logged with the prefix `[write]`.
 
 ## Charge sessions
 
-A charge starts at the charger's `StartTransaction` and ends at its `StopTransaction`. All information about a charge belongs to the charge, not to loose sensors. While it runs, `_current_session` shows the energy since the start (kWh), with the start, duration, tag, transaction, peak and average power, the highest current per phase, the offered current and the limit the hub had set as attributes; it is empty when no charge runs. When the charge ends, the same numbers are stored with it. `_last_session` holds the end time of the latest finished charge with the same attributes plus the stop reason, and the 20 newest charges in `recent_sessions`.
+A charge runs from the charger's `StartTransaction` to its `StopTransaction`. `_current_session` shows the energy of
+the running charge with its start, duration, tag, peak and average power and limits as attributes. `_last_session`
+shows the latest finished charge and the 20 newest in `recent_sessions`.
 
-Every finished charge is kept in Home Assistant's storage, with no limit (about 300 bytes each), and survives restarts. The service `ocpp_hub.get_sessions` returns the whole history, newest first, optionally for one `charger_id` and limited by `limit`. A charge that was running while Home Assistant restarted is not recorded: the hub does not know its start. The energy of a charge is the meter at the stop minus the meter at the start; if the charger sends no stop reading, the last meter value is used.
+Every finished charge is kept in Home Assistant's storage without limit (about 300 bytes each). The action
+`ocpp_hub.get_sessions` returns the history, newest first, optionally for one `charger_id` and up to `limit`. A charge
+that was running while Home Assistant restarted is not recorded.
 
-## Limits in Home Assistant and at the vendor
+## Schedules and the charging plan
 
-Two parties can limit a charger: Home Assistant (the charge limit number) and the vendor's app. The charger applies the lower of the two, so the limit you set in Home Assistant is also a ceiling over what the vendor's app can ask for.
+There are three ways to tell the charger when it may charge. All of them write one recurring OCPP profile that the
+charger keeps on its own, so the plan works even while Home Assistant is down.
 
-- **Home Assistant to charger and vendor.** The number sends the limit to the charger. The vendor sees the effect in the offered current of the meter values the mirror forwards, and when it asks for the composite schedule (`GetCompositeSchedule`) it is answered with the limit in effect, whether or not commands are passed on.
-- **Vendor app to Home Assistant and charger.** A limit set in the vendor's app is a `SetChargingProfile` command. With *Commands from the backend* set to *Pass them on to the charger* it reaches the charger (under your ceiling) and is shown as the `vendor_limit_a` attribute of the charge limit number and of `_limit_in_effect`. With the setting on *Refuse them* the command is refused and nothing changes.
-- **`_limit_in_effect`** shows the limit that applies now. After every change the hub asks the charger what is in effect (`GetCompositeSchedule`, a read) and shows its answer (`source: charger`); a charger that cannot say leaves the lowest of the limits the hub knows (`source: calculated`).
-- **Saved in Home Assistant.** The limits survive a restart: the number and `_limit_in_effect` show them again as soon as the charger connects, before it has said anything. A profile that belongs to one charge ends with that charge and is not kept. A restored limit is marked `restored_unconfirmed` until the charger confirms it: when the charger answers the composite schedule, a stored limit that it does not show is dropped (the charger may have rebooted, or the vendor may have changed it), and while it is unconfirmed the vendor is not told about it. A charger that cannot answer leaves the stored value shown with that mark, so check it in the vendor app or set the limit again. A charge profile or a changed charge also clears what the charger reported before, so a pause that ended with its charge does not linger.
+### The charging plan
 
-## Schedule
-
-The charger's own schedule for the next 24 hours is read after every change and shown as the `schedule` attribute of `_limit_in_effect`: a list of `from` (a time) and `limit_a`, so you see what it will actually do. The attribute is not kept in the database.
-
-To set a schedule, use the service `ocpp_hub.set_schedule` (Developer tools, Actions), with `periods`: a list of a time of the day and the limit that applies from then on, for example
+The plan is a list of windows per weekday. Inside a window the charger gets *Limit inside the blocks* (your ceiling
+unless set), outside them *Limit outside the blocks* (a pause unless set). Both are in the options.
 
 ```yaml
-action: ocpp_hub.set_schedule
+action: ocpp_hub.set_plan
 data:
-  periods:
-    - {time: "00:00", limit: 6}
-    - {time: "07:00", limit: 16}
+  windows:
+    - {day: monday, from: "12:00", to: "14:00"}
+    - {day: friday, from: "22:00", to: "06:00"}   # runs overnight
 ```
 
-The first period starts at 00:00 and the times increase. Every limit obeys the single limit rules: it stays under your ceiling, and under 6 A it pauses the charger. The hub installs it as one recurring daily profile that starts at midnight local time. It replaces the single charge limit, which uses the same profile; setting a charge limit replaces the schedule, and the *Clear charge limit* button removes either. Because the charger counts from a fixed point in UTC, the change between summer and winter time moves the schedule by an hour until you set it again. The charger accepting a schedule does not prove that it follows it; the attribute above shows what it reports, and the first night will show the rest.
+An empty list removes the hub's profile. The plan shows in `_app_plan` and in the calendar
+`calendar.ocpp_hub_<id>_charging_plan`, which you can open from the Calendar panel or use in automations. The calendar
+is read-only.
 
-### Schedule helper
+### With the Raedian app
 
-Instead of calling the service by hand you can use a **schedule helper** of Home Assistant (Settings, Devices & services, Helpers, Schedule), which has a weekly editor with blocks per weekday. Choose it in the options of OCPP Hub (*Schedule helper*). Its blocks are the times in which the charger may charge:
+With *Commands from the backend* set to *Pass them on to the charger*, the Raedian app and Home Assistant share the same
+plan:
 
-- inside a block the charger gets *Limit inside the blocks* (empty means your ceiling), or the `limit` that the block carries in its data;
-- outside the blocks it gets *Limit outside the blocks* (empty means 0 A, a pause; under 6 A pauses).
+- When the app shows its planning, the hub answers with the plan.
+- When the app changes the planning, the hub takes it over, writes it to the charger and tells the app it worked.
+- When you switch the planning off in the app, the hub removes its profile so the charger charges freely, and keeps the
+  windows for later. Switching it on writes them again.
 
-The button `button.ocpp_hub_<charger id>_apply_schedule` reads the helper and writes it to the charger; **nothing is written when the helper changes, only when you press the button**. When every day has the same blocks the hub sends a daily profile, otherwise a weekly one that starts on Monday 00:00 local time, held to the number of periods the charger says it supports (`ChargingScheduleMaxPeriods`). Every limit stays under your ceiling. A schedule from the vendor's app that was passed on shows in `_limit_in_effect` in the same way as one set here; and when the vendor asks for the composite schedule of more than the present moment, it is answered with the schedule the charger reported, seen from now.
+The app talks to the charger through its own binary protocol inside OCPP `DataTransfer`. The hub decodes the planning
+part of it; the layout was worked out from captured traffic and is documented in
+[docs/raedian-protocol.md](docs/raedian-protocol.md). A planning message that does not parse completely is refused.
+This part is **experimental**: the charger also has a planning of its own that the hub does not write to, and whether
+the firmware enforces it next to the hub's profile is not known yet.
 
-### The charging plan, shared with the Raedian app
+### A daily schedule, or a schedule helper
 
-There is one charging plan, kept by the hub: windows per weekday in which the charger may charge. It is the master; the Raedian app and Home Assistant both show and change it.
+- `ocpp_hub.set_schedule` sets a daily schedule as a list of a time and the limit from then on, for example
+  `[{time: "00:00", limit: 6}, {time: "07:00", limit: 16}]`.
+- A **schedule helper** (Settings, Devices & services, Helpers, Schedule) can be chosen in the options. Its blocks are
+  the windows in which the charger may charge. Nothing is written when the helper changes: press
+  `button.ocpp_hub_<id>_apply_schedule` to send it.
 
-- **From Home Assistant:** the service `ocpp_hub.set_plan` with `windows`, each a `day`, a start (`from`) and an end (`to`); an end at or before the start runs overnight. `_app_plan` shows the windows. An empty list removes the hub's profile.
-- **From the app:** the Raedian app keeps no planning of its own, it asks the charger for it through `DataTransfer` (`READIAN` / `RemoteConfiguration`, command `a7`). With commands passed on, the hub answers that question from the plan, and when the app writes a planning it is taken over by the plan and the app is told it worked. The app's planning is not passed on to the charger. The very first question, while the hub has no plan, goes to the charger and its answer becomes the plan.
-- **To the charger:** whenever the plan is set, by the app or from Home Assistant, the hub writes one recurring OCPP profile: the *limit inside the blocks* (your ceiling unless set) inside the windows and the *limit outside the blocks* (a pause unless set) outside them, daily when every day is the same and weekly otherwise. The plan is kept only when the charger accepts the profile; otherwise the app is told it failed. Lowering or raising the limits is done in the options. Mind that with the default of a pause outside the windows the charger does not charge outside them. A single charge limit, a schedule or the clear button written afterwards replaces the hub's profile; the plan is then emptied (and the app is answered with the empty plan) instead of going on to claim what the charger no longer follows.
-
-**Experimental.** The charger also has a planning of its own (the one the app used to write). The hub no longer writes to it, so if the firmware enforces windows from it, those old windows may still apply next to the profile of the hub. Whether it does is not known yet; if charging is blocked at a time the plan allows, clear the app's old planning by setting an empty plan from the app or with `ocpp_hub.set_plan` and tell the project.
-
-The layout of the app's messages was worked out from captured exchanges and is checked on every frame (a check byte, a length, and every byte of a window accounted for); a planning message that does not parse completely is refused. See `core/raedian.py`.
+The plan, the schedule, the schedule helper and the charge limit share one profile on the charger, so the last one
+written wins. When a limit or schedule replaces the plan, the plan is emptied instead of showing windows the charger no
+longer follows. The charger counts recurring profiles from a fixed point in UTC, so the change between summer and
+winter time moves a schedule by an hour until it is written again.
 
 ## Vendor mirror
 
 Open the integration's options and fill in:
 
-- **Backend address:** the vendor's OCPP address, starting with `ws://` or `wss://`, with host, port and path but without the charger's serial number (the hub adds that, as the charger itself does) and without credentials in it. Leave it empty to switch the mirror off.
-- **Raedian (NEO and other Raedian chargers):** use `wss://cloud-protocol.raedian.com:9043/ocpp/` and leave user name and password empty. The port is 9043; the installer app hides the address of its default profile, and port 443 does not answer. Verified on a NEO 22 kW: the vendor accepts the connection and its app shows the charger as online.
-- **User name and password:** only if the backend asks for them. They are sent as HTTP Basic authentication; the password field never shows what is stored, and an empty field keeps it.
+- **Backend address**: the vendor's OCPP address (`ws://` or `wss://`, host, port and path) without the charger id; the
+  hub adds it, as the charger does. Leave it empty to switch the mirror off.
+- **User name and password**: only if the backend asks for them (HTTP Basic authentication).
 
-Per charger there are two diagnostic sensors, `_mirror_status` (idle, connecting or connected, with the last error, the number of frames waiting and the counters as attributes) and `_mirror_queue` (frames waiting).
+For Raedian chargers use `wss://cloud-protocol.raedian.com:9043/ocpp/` with no user name or password.
 
-What the mirror does and does not do:
+What the mirror does:
 
-- It forwards every request of the charger except its heartbeats, in order, one at a time, and sends heartbeats of its own at the interval the vendor asks for. When the vendor is unreachable it keeps the frames in a queue of up to 5000 (only meter values and status changes are dropped when it is full) and delivers them in order when the link is back.
-- Transaction ids differ between the hub and the vendor; the mirror translates them. A stop for a transaction the vendor never confirmed is not sent.
-- By default every command from the vendor is refused with an answer the protocol allows, and nothing reaches the charger.
-- With *Commands from the backend* set to *Pass them on to the charger*, the vendor's `RemoteStartTransaction`, `RemoteStopTransaction`, `SetChargingProfile`, `ClearChargingProfile`, `ChangeConfiguration`, `ChangeAvailability` and `UnlockConnector` go to the charger, and its answer goes back to the vendor. Limits stay: a charging profile (also one inside a remote start) must name its unit (A or W) and may not ask for more than your current ceiling, a profile in watts is converted with its number of phases, and a profile that reuses the hub's profile id is refused; so is a stop of a transaction the hub does not know. Only a list of standard OCPP settings that touch neither the connection, the authentication, the metering nor the reading of profiles can be changed (for example `LightIntensity` and `ConnectionTimeOut`; keys that set what or how often the charger reports, such as `HeartbeatInterval`, are not on the list); any other key is refused and logged, so you can see what the vendor tried. `Reset`, `UpdateFirmware` and `GetDiagnostics` are refused in every setting. `DataTransfer`, the vendor's own channel (the Raedian app uses it for its planning screen, `READIAN` / `RemoteConfiguration`), is passed on as it is when commands are passed on, on the owner's decision: its content cannot be checked, so both the request and the charger's answer are logged in full at info level with the prefix `[forward] DataTransfer`. Note that the vendor can still pause the charger with a profile of 0 A or set the connector inoperative, and can unlock the cable: you chose to allow that by turning this on. At most four vendor commands wait for the charger at once. Every passed-on or refused command is logged with the prefix `[forward]`. A profile from the vendor sits next to the one the hub sets, and the charger applies the lower limit, so the charge limit number does not show what the vendor set.
-- The queue and the transaction ids live in memory. If Home Assistant restarts while a charge is running, that session stays open at the vendor, and its meter values go without a transaction id.
+- It forwards every message of the charger except heartbeats, in order, and keeps up to 5000 frames while the vendor is
+  unreachable. Transaction ids are translated between the hub and the vendor.
+- By default every command from the vendor is refused with an answer the protocol allows, and nothing reaches the
+  charger.
+- With *Commands from the backend* set to *Pass them on to the charger*, the vendor's remote start and stop, charging
+  profiles, a short list of harmless configuration keys, availability, unlock and `DataTransfer` reach the charger.
+  Charging profiles stay under your ceiling. `Reset`, `UpdateFirmware` and `GetDiagnostics` are always refused. Every
+  passed-on or refused command is logged with the prefix `[forward]`; `DataTransfer` is logged in full both ways
+  because its content cannot be checked.
 
-## Install
+Two diagnostic sensors per charger, `_mirror_status` and `_mirror_queue`, show the state of the link.
 
-1. In HACS, add `https://github.com/MarkBovee/ocpp-hub` as a custom repository of type *Integration*.
-2. Download **OCPP Hub** and restart Home Assistant.
-3. Add the integration under *Settings, Devices & services* and pick the port (default 9000).
+## Troubleshooting
 
-## Connect a charger
+- **The charger does not connect.** Check the address in the charger (`ws://`, not `wss://`, and the port you chose)
+  and that nothing else listens on that port.
+- **Entities stay unknown after a restart.** A charger that reconnects often sends no boot or status; after fifteen
+  seconds the hub asks for them with `TriggerMessage`.
+- **See every OCPP message.** Set the logger `custom_components.ocpp_hub.frames` to `debug` (Developer tools, Actions,
+  `logger.set_level`). The log then holds every frame both ways, including id tags and serial numbers, so turn it off
+  again afterwards.
+- **Read the Raedian app's messages.** `python tools/raedian_frames.py home-assistant.log` lists the protocol frames in
+  a log and marks the commands the hub does not decode yet.
 
-In the charger's OCPP settings, set the backend URL to `ws://<Home Assistant IP>:<port>`. Most chargers append their own identity to that URL. The port has no authentication, so keep it on a trusted network.
+## Contributing
 
-Raedian NEO: the OCPP profile (URL and `ChargePointSerialNumber`) is set in the RAEDIAN Install app, which is meant for certified installers.
-
-## Development
+Issues and pull requests are welcome. See [docs/developer.md](docs/developer.md) for the layout of the code and how to
+run the checks:
 
 ```bash
 python3 -m venv .venv
@@ -128,8 +224,19 @@ python3 -m venv .venv
 .venv/bin/python tools/validate.py
 ```
 
-The engine in `custom_components/ocpp_hub/core/` imports nothing from Home Assistant, so it is tested and type-checked on its own. See [docs/developer.md](docs/developer.md) and [docs/release-process.md](docs/release-process.md).
+The engine in `custom_components/ocpp_hub/core/` imports nothing from Home Assistant and is tested on its own against
+a fake charger over a real websocket.
+
+Do not post logs with id tags, serial numbers, addresses or credentials in issues. Security problems go through
+[SECURITY.md](SECURITY.md).
+
+## Disclaimer
+
+OCPP Hub is an independent project. It is not made, endorsed or supported by Raedian or by any charger manufacturer,
+and not by Home Assistant. Product names are used only to say what the integration works with. Writing to a charger
+changes how it charges; use it within the limits of your installation, at your own risk.
 
 ## License
 
-Apache-2.0. Parts of the design follow [ha-ocpp-relay](https://github.com/michael-adler/ha-ocpp-relay) (MIT); see `NOTICE`.
+Apache-2.0. Parts of the design follow [ha-ocpp-relay](https://github.com/michael-adler/ha-ocpp-relay) (MIT) and the
+behaviour of [lbbrhzn/ocpp](https://github.com/lbbrhzn/ocpp) (MIT); see [NOTICE](NOTICE).

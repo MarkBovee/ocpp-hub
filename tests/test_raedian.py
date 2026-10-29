@@ -13,7 +13,7 @@ from ocpp_hub_core.raedian import (
     plan_from_exchange,
 )
 
-SESSION = "e33dde46e9b0fcb2"
+SESSION = "0123456789abcdbe"
 READ_REQUEST = "fea7000001000801" + SESSION + "00"
 EMPTY_ANSWER = "aaa7000002000856" + SESSION + "0000"
 WRITE_ACK = "aaa7000001000855" + SESSION + "00"

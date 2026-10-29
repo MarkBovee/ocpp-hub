@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for the report. Please leave out id tags, serial numbers, IP addresses and credentials, also in logs.
+  - type: input
+    id: charger
+    attributes:
+      label: Charger
+      description: Manufacturer, model and firmware (the device page in Home Assistant shows them)
+      placeholder: Raedian NEO 22 kW, firmware 2.0.5
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: OCPP Hub version and Home Assistant version
+      placeholder: OCPP Hub 0.2.0, Home Assistant 2026.10.1
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: >-
+        Lines of `custom_components.ocpp_hub` around the problem. For OCPP frames set the logger
+        `custom_components.ocpp_hub.frames` to debug first.
+      render: text
