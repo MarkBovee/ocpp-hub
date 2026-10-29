@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+First public release. The same as 0.2.0, whose release job did not run.
+
+- Fix: the release gate uses the newest run of each required check.
+
 ## 0.2.0
 
 First public release.
