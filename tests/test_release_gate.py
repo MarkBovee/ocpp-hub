@@ -35,3 +35,15 @@ def test_wait_for_gate_uses_the_required_checks() -> None:
     ok, _ = gate.wait_for_gate(lambda: [_run("validate")], timeout=1.0, required=gate.required_checks(private=True))
 
     assert ok
+
+
+# Intent: when a check ran twice on a commit, the newest run decides, whatever order the API lists them in.
+# Why: the first public tag failed because a HACS run skipped while the repository was private was read instead of the
+# successful run made after it went public.
+def test_the_newest_run_of_a_check_decides() -> None:
+    skipped = {**_run("validate-hacs", conclusion="skipped"), "id": 1}
+    passed = {**_run("validate-hacs"), "id": 2}
+    validate = {**_run("validate"), "id": 3}
+
+    assert gate.evaluate([passed, skipped, validate])[0] == "pass"
+    assert gate.evaluate([{**passed, "id": 0}, skipped, validate])[0] == "fail"
