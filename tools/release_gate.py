@@ -28,7 +28,9 @@ REQUIRED_CHECKS: tuple[str, ...] = ("validate", "validate-hacs")
 def evaluate(check_runs: Sequence[Mapping[str, object]], required: Sequence[str] = REQUIRED_CHECKS) -> tuple[str, str]:
     """Return ``(state, detail)`` where state is ``pass``, ``fail`` or ``pending``."""
     by_name: dict[str, Mapping[str, object]] = {}
-    for run in check_runs:
+    # A check can run more than once on a commit (a re-run, or a skip while the repository was private): the newest
+    # run, the one with the highest id, is the one that counts.
+    for run in sorted(check_runs, key=lambda item: int(str(item.get("id") or 0))):
         by_name[str(run.get("name"))] = run
     pending: list[str] = []
     for name in required:
