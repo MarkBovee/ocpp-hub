@@ -18,7 +18,7 @@ from ocpp_hub_core.plan_bridge import (
 from ocpp_hub_core.raedian import PlanWindow
 from ocpp_hub_core.schedule_plan import Block
 
-SESSION = bytes.fromhex("e33dde46e9b0fcb2")
+SESSION = bytes.fromhex("0123456789abcdbe")
 MONDAY = PlanWindow(1, 43200, 50400)
 TUESDAY = PlanWindow(2, 46800, 61200)
 

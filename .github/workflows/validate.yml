@@ -19,5 +19,3 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
-          # The brand images (icon.png/logo.png) are added with the first public release.
-          ignore: brands

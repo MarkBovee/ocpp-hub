@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+First public release.
+
+- Brand images (icon and logo) in `custom_components/ocpp_hub/brand/`, shown by Home Assistant 2026.3 and newer; a README for a public audience; issue templates and private security reporting.
 
 - A calendar entity per charger (`calendar.ocpp_hub_<id>_charging_plan`) shows the charging plan as repeating events, so it can be seen in the calendar dashboard and used in automations. It is read-only; the plan is still changed in the app or with `ocpp_hub.set_plan`.
 
