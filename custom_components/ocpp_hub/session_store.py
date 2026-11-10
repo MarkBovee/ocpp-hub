@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .core.model import ChargeSession, LimitMemory
+from .core.model import ChargeMemory, ChargeSession, LimitMemory
 from .core.raedian import PlanWindow
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,6 +100,55 @@ class LimitStore:
     # The limits as the JSON that is written.
     def _data(self) -> dict[str, Any]:
         return {"limits": {cp_id: memory.to_dict() for cp_id, memory in self._limits.items()}}
+
+
+CHARGES_STORAGE_KEY = f"{DOMAIN}.charges"
+
+
+class ChargeStore:
+    """The running charges and the energy register of each charger, so both survive a restart of Home Assistant."""
+
+    # Keep the storage handle; nothing is read until async_load.
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, CHARGES_STORAGE_KEY)
+        self._charges: dict[str, ChargeMemory] = {}
+
+    # Read the saved charges. A record that cannot be read is skipped with a warning.
+    async def async_load(self) -> dict[str, ChargeMemory]:
+        stored = await self._store.async_load()
+        records = stored.get("chargers") if isinstance(stored, dict) else None
+        for cp_id, record in records.items() if isinstance(records, dict) else []:
+            try:
+                self._charges[cp_id] = ChargeMemory.from_dict(record)
+            except KeyError, TypeError, ValueError, AttributeError:
+                _LOGGER.warning("Skipping an unreadable charge record in storage")
+        return dict(self._charges)
+
+    # The memory of one charger as it was last stored or updated, or None.
+    def remembered(self, cp_id: str) -> ChargeMemory | None:
+        return self._charges.get(cp_id)
+
+    # Forget the stored register of one charger and keep its running charges.
+    def forget_register(self, cp_id: str) -> None:
+        memory = self._charges.get(cp_id)
+        if memory is not None:
+            self.update(cp_id, ChargeMemory(charges=memory.charges))
+
+    # Keep the charges of one charger and schedule a save; an empty memory removes the charger.
+    def update(self, cp_id: str, memory: ChargeMemory) -> None:
+        if memory.empty:
+            self._charges.pop(cp_id, None)
+        else:
+            self._charges[cp_id] = memory
+        self._store.async_delay_save(self._data, SAVE_DELAY_S)
+
+    # Save now; used when the entry unloads.
+    async def async_flush(self) -> None:
+        await self._store.async_save(self._data())
+
+    # The charges as the JSON that is written.
+    def _data(self) -> dict[str, Any]:
+        return {"chargers": {cp_id: memory.to_dict() for cp_id, memory in self._charges.items()}}
 
 
 PLAN_STORAGE_KEY = f"{DOMAIN}.plan"

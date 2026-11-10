@@ -49,9 +49,9 @@ def power_w(snapshot: ChargerSnapshot) -> float | None:
 
 # The charger's energy register in kilowatt-hours; rounded to the watt-hour so float noise does not show as a change.
 def energy_kwh(snapshot: ChargerSnapshot) -> float | None:
-    if snapshot.meter is None or snapshot.meter.energy_wh is None:
+    if snapshot.register_wh is None:
         return None
-    return round(snapshot.meter.energy_wh / 1000, 3)
+    return round(snapshot.register_wh / 1000, 3)
 
 
 # The latest current of one phase (L1, L2 or L3), in amperes; zero while the socket delivers nothing, and zero for a
@@ -82,15 +82,13 @@ def _running_charge(snapshot: ChargerSnapshot) -> ConnectorState | None:
     return connector if connector is not None and connector.transaction_id is not None else None
 
 
-# The energy delivered in the charge that is running, in kilowatt-hours; None when no charge runs or the start reading
-# is missing. Never negative, because a meter that was reset must not show a negative charge.
+# The energy delivered in the charge that is running, in kilowatt-hours: the register now minus the register at the
+# start. None when no charge runs or either is unknown; never negative, so a meter that was reset shows no charge.
 def session_energy_kwh(snapshot: ChargerSnapshot) -> float | None:
     charge = _running_charge(snapshot)
-    if charge is None or charge.meter_start_wh is None:
+    if charge is None or charge.register_start_wh is None or snapshot.register_wh is None:
         return None
-    if snapshot.meter is None or snapshot.meter.energy_wh is None:
-        return None
-    return round(max(snapshot.meter.energy_wh - charge.meter_start_wh, 0.0) / 1000, 3)
+    return round(max(snapshot.register_wh - charge.register_start_wh, 0.0) / 1000, 3)
 
 
 # When the charge that is running started, or None.

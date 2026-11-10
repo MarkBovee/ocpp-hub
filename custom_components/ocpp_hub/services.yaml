@@ -38,3 +38,11 @@ set_plan:
       example: '[{"day": "monday", "from": "12:00", "to": "14:00"}, {"day": "tuesday", "from": "13:00", "to": "17:00"}]'
       selector:
         object:
+
+reset_energy_register:
+  fields:
+    charger_id:
+      required: false
+      example: "CHARGER1"
+      selector:
+        text:

@@ -29,6 +29,7 @@ from .const import (
     PACKAGE_LOGGER,
     RETIRED_ENTITY_KEYS,
     SERVICE_GET_SESSIONS,
+    SERVICE_RESET_ENERGY_REGISTER,
     SERVICE_SET_PLAN,
     SERVICE_SET_SCHEDULE,
 )
@@ -42,7 +43,7 @@ from .core.schedule_plan import SchedulePlanError
 from .plan_sync import PlanSync
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
 from .schedule_helper import WEEKDAYS
-from .session_store import LimitStore, PlanStore, SessionStore
+from .session_store import ChargeStore, LimitStore, PlanStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ def _read_build_stamp() -> str:
 GET_SESSIONS_SCHEMA = vol.Schema(
     {vol.Optional("charger_id"): str, vol.Optional("limit"): vol.All(int, vol.Range(min=1))}
 )
+
+
+RESET_ENERGY_REGISTER_SCHEMA = vol.Schema({vol.Optional("charger_id"): str})
 
 
 # A limit from the service call as a float; text, nan or a number too big to be one is refused with a normal error.
@@ -165,7 +169,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"detail": str(error)},
             ) from error
 
+    # Forget the energy register of a charger after its meter was replaced or reset, so the energy sensor follows the
+    # new meter. Home Assistant sees the lower value as a meter reset, which is what happened. Nothing is written to
+    # the charger.
+    async def reset_energy_register(call: ServiceCall) -> None:
+        entries = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_hub_loaded")
+        runtime = entries[0].runtime_data
+        announced = runtime.listener.announced
+        cp_id = call.data.get("charger_id") or (announced[0] if len(announced) == 1 else None)
+        if cp_id is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="charger_not_chosen")
+        runtime.listener.reset_register(runtime.central, cp_id)
+
     hass.services.async_register(DOMAIN, SERVICE_SET_SCHEDULE, set_schedule, schema=SET_SCHEDULE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESET_ENERGY_REGISTER, reset_energy_register, schema=RESET_ENERGY_REGISTER_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_SET_PLAN, set_plan, schema=SET_PLAN_SCHEMA)
     return True
 
@@ -221,6 +242,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     await sessions.async_load()
     limits = LimitStore(hass)
     stored_limits = await limits.async_load()
+    charges = ChargeStore(hass)
+    stored_charges = await charges.async_load()
     policy = _control_policy(entry)
     plan_store = PlanStore(hass)
     await plan_store.async_load()
@@ -230,6 +253,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
         await mirror.start()
     central = CentralSystem([], policy=policy)
     central.restore_limits(stored_limits)
+    central.restore_charges(stored_charges)
     plans.bind(central)
     listener = HubListener(
         hass,
@@ -239,6 +263,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
         limits,
         plans.snapshot_changed,
         mirror_enabled=settings is not None,
+        charges=charges,
     )
     central.add_listeners([listener, *([mirror] if mirror is not None else [])])
     port = entry.data[CONF_PORT]
@@ -249,7 +274,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
     try:
-        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits, plans)
+        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits, plans, charges)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
@@ -288,5 +313,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> 
         finally:
             await entry.runtime_data.sessions.async_flush()
             await entry.runtime_data.limits.async_flush()
+            await entry.runtime_data.charges.async_flush()
             await entry.runtime_data.plans.async_flush()
     return unloaded

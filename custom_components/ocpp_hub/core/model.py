@@ -80,6 +80,9 @@ class ConnectorState:
     transaction_id: int | None = None
     id_tag: str | None = None
     meter_start_wh: float | None = None
+    # The charger's absolute register when the charge started; meter_start_wh is what the charger said, which the NEO
+    # sends as 0.
+    register_start_wh: float | None = None
     started_at: datetime | None = None
     stats: ChargeStats = field(default_factory=ChargeStats)
 
@@ -96,6 +99,8 @@ class ChargerSnapshot:
     configuration: Mapping[str, str] = field(default_factory=dict)
     connectors: Mapping[int, ConnectorState] = field(default_factory=dict)
     meter: MeterSample | None = None
+    # The absolute energy register, never decreasing; see energy_register. meter.energy_wh is the raw last reading.
+    register_wh: float | None = None
     last_seen: datetime | None = None
     # The current limit the hub last set and the profile purpose the charger accepted for it; None when the hub has set
     # none on this connection. The charger is not asked what it holds, so this is what the hub knows it wrote.
@@ -251,3 +256,68 @@ class LimitMemory:
             vendor_profile_id=int(profile_id) if profile_id is not None else None,
             vendor_purpose=data.get("vendor_purpose"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ChargeMemory:
+    """What must survive a restart of Home Assistant for the energy to stay right: the charges that are running and
+    the absolute register. Without it a StopTransaction after a restart finds no start and the charge is lost."""
+
+    register_wh: float | None = None
+    charges: Mapping[int, ConnectorState] = field(default_factory=dict)
+    # Set when read from storage: the register may be a little behind the charger, so it only guards against readings
+    # that go back and is not shown until the charger sends one. Never stored itself.
+    restored: bool = False
+
+    @property
+    def empty(self) -> bool:
+        """True when there is nothing to remember."""
+        return self.register_wh is None and not self.charges
+
+    # The memory as plain JSON values; the statistics of a running charge are not kept.
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "register_wh": self.register_wh,
+            "charges": [
+                {
+                    "connector_id": c.connector_id,
+                    "transaction_id": c.transaction_id,
+                    "id_tag": c.id_tag,
+                    "meter_start_wh": c.meter_start_wh,
+                    "register_start_wh": c.register_start_wh,
+                    "started_at": c.started_at.isoformat() if c.started_at is not None else None,
+                }
+                for c in self.charges.values()
+                if c.transaction_id is not None
+            ],
+        }
+
+    # Rebuild the memory from what to_dict wrote; a damaged record raises, so the caller can skip it.
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ChargeMemory:
+        # A stored energy as a float, or None; anything that is not a finite, non-negative number raises.
+        def energy(record: Mapping[str, Any], key: str) -> float | None:
+            value = record.get(key)
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{key} is not a number")
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{key} is not a usable energy")
+            return float(value)
+
+        if not isinstance(data, Mapping):
+            raise TypeError("a charge record must be an object")
+        charges: dict[int, ConnectorState] = {}
+        for record in data.get("charges") or []:
+            started = record.get("started_at")
+            connector = ConnectorState(
+                connector_id=int(record["connector_id"]),
+                transaction_id=int(record["transaction_id"]),
+                id_tag=record.get("id_tag"),
+                meter_start_wh=energy(record, "meter_start_wh"),
+                register_start_wh=energy(record, "register_start_wh"),
+                started_at=datetime.fromisoformat(started) if started is not None else None,
+            )
+            charges[connector.connector_id] = connector
+        return cls(register_wh=energy(data, "register_wh"), charges=charges, restored=True)

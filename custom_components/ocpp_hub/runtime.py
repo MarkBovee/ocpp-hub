@@ -18,14 +18,17 @@ from .core import commands
 from .core.central import CentralSystem
 from .core.frames import Frame
 from .core.mirror import VendorMirror
-from .core.model import ChargerSnapshot, ChargeSession, LimitMemory
+from .core.model import ChargeMemory, ChargerSnapshot, ChargeSession, LimitMemory
 from .core.session import ChargerSession
 from .plan_sync import PlanSync
-from .session_store import LimitStore, SessionStore
+from .session_store import ChargeStore, LimitStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 # The raw OCPP frames, at debug level only; a frame can hold an id tag or a serial number, so it is off by default.
 _FRAME_LOGGER = logging.getLogger(f"{PACKAGE_LOGGER}.frames")
+# How far the register may move before it is saved again. Saving every reading would write storage four times a
+# minute while charging; the stored register only guards against readings that go back, so a little behind is fine.
+_REGISTER_SAVE_STEP_WH = 100.0
 
 
 # True once the charger has said who it is (its BootNotification arrived).
@@ -57,8 +60,12 @@ class HubListener:
         limits: LimitStore,
         plan_changed: Callable[[ChargerSnapshot], None] = lambda snapshot: None,
         mirror_enabled: bool = False,
+        charges: ChargeStore | None = None,
     ) -> None:
         self._hass = hass
+        self._charges = charges
+        # What was last handed to the charge storage per charger.
+        self._saved_charges: dict[str, ChargeMemory] = {}
         self._sessions = sessions
         self._limits = limits
         # Tells the plan about every snapshot, so it can notice that its profile was replaced.
@@ -88,6 +95,7 @@ class HubListener:
     def on_snapshot(self, snapshot: ChargerSnapshot) -> None:
         self.snapshots[snapshot.cp_id] = snapshot
         self._save_limits(snapshot)
+        self._save_charges(snapshot)
         self.plans_changed(snapshot)
         if snapshot.cp_id not in self._announced and _has_booted(snapshot):
             self._announced.add(snapshot.cp_id)
@@ -129,6 +137,33 @@ class HubListener:
                 vendor_purpose=current.vendor_purpose if current.vendor_purpose in lasting else None,
             ),
         )
+
+    # Save the running charges and the register of a charger when a charge started or ended, or the register moved
+    # enough, so a restart of Home Assistant loses neither.
+    def _save_charges(self, snapshot: ChargerSnapshot) -> None:
+        if self._charges is None or not snapshot.connected:
+            return
+        running = {n: c for n, c in snapshot.connectors.items() if c.transaction_id is not None}
+        saved = self._saved_charges.get(snapshot.cp_id) or self._charges.remembered(snapshot.cp_id)
+        # After a restart the register is not shown until the charger sends one; the stored one must stay meanwhile.
+        register = snapshot.register_wh
+        if register is None and saved is not None:
+            register = saved.register_wh
+        current = ChargeMemory(register_wh=register, charges=running)
+        if saved is not None and _same_charges(saved, current) and not _register_moved(saved, current):
+            return
+        self._saved_charges[snapshot.cp_id] = current
+        self._charges.update(snapshot.cp_id, current)
+
+    # Forget the register of a charger everywhere it is kept: in storage, in what was last saved, and in the engine.
+    # Storage goes first, so the snapshot without a register that follows cannot bring the old one back.
+    def reset_register(self, central: CentralSystem, cp_id: str) -> None:
+        if self._charges is not None:
+            self._charges.forget_register(cp_id)
+        saved = self._saved_charges.pop(cp_id, None)
+        if saved is not None:
+            self._saved_charges[cp_id] = ChargeMemory(charges=saved.charges)
+        central.reset_register(cp_id)
 
     # Tell the owner that a charger connected: who it is and what it speaks, in the language of the instance.
     # The notification has a fixed id per charger, so a reconnect updates it instead of piling up new ones.
@@ -178,6 +213,22 @@ class HubListener:
         _LOGGER.info("[build %s] Charger %s disconnected", self._build, cp_id)
 
 
+# True when two memories hold the same running transactions.
+def _same_charges(saved: ChargeMemory, current: ChargeMemory) -> bool:
+    return {n: c.transaction_id for n, c in saved.charges.items()} == {
+        n: c.transaction_id for n, c in current.charges.items()
+    }
+
+
+# True when the register moved enough since it was saved, or became known.
+def _register_moved(saved: ChargeMemory, current: ChargeMemory) -> bool:
+    if current.register_wh is None:
+        return False
+    if saved.register_wh is None:
+        return True
+    return abs(current.register_wh - saved.register_wh) >= _REGISTER_SAVE_STEP_WH
+
+
 @dataclass
 class HubRuntime:
     """The running parts of one config entry."""
@@ -188,6 +239,7 @@ class HubRuntime:
     sessions: SessionStore
     limits: LimitStore
     plans: PlanSync
+    charges: ChargeStore
 
 
 type OcppHubConfigEntry = ConfigEntry[HubRuntime]
