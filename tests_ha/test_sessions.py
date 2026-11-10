@@ -116,3 +116,33 @@ async def test_the_history_is_unbounded_persistent_and_served(
 
     assert len(everything["sessions"]) == 301 and other["sessions"] == []
     assert [s["transaction_id"] for s in newest["sessions"]] == [1299, 1298]
+
+
+# Intent: a charge that is running while the entry reloads (as on a restart of Home Assistant) is still reported when it
+# stops after the reload, and the last-session sensor shows it.
+# Why: on 10 November two restarts in the middle of a charge left last_session on the charge before, because the stop
+# found no start.
+async def test_a_charge_running_through_a_reload_reaches_the_last_session(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    entry = await setup_hub()
+    charger = await connect_charger(entry)
+    await charger.boot()
+    await wait_for(hass, lambda: state_of(hass, LAST_SESSION) is not None, "no entities")
+    started = await charger.call(
+        "StartTransaction",
+        {"connectorId": 1, "idTag": "TAG1", "meterStart": 1000, "timestamp": "2026-10-21T08:00:00Z"},
+    )
+    await charger.call("MeterValues", _meter("2026-10-21T08:30:00Z", 3000, 6000))
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    again = await connect_charger(entry)
+    await again.boot()
+    await again.call(
+        "StopTransaction",
+        {"transactionId": started[2]["transactionId"], "meterStop": 5000, "timestamp": "2026-10-21T09:00:00Z"},
+    )
+
+    await wait_for(hass, lambda: state_of(hass, LAST_SESSION) == "2026-10-21T09:00:00+00:00", "stop lost on reload")
+    assert hass.states.get(LAST_SESSION).attributes["energy_kwh"] == 4.0

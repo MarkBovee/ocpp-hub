@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from websockets.exceptions import ConnectionClosed
 
 from . import commands
+from .energy_register import as_absolute, charge_start_register, next_register
 from .frames import (
     ERROR_FORMATION_VIOLATION,
     ERROR_INTERNAL,
@@ -30,12 +31,14 @@ from .frames import (
 from .metering import merge_samples, parse_meter_values, parse_timestamp
 from .model import (
     MAX_STORED_LIMIT_A,
+    ChargeMemory,
     ChargerInfo,
     ChargerSnapshot,
     ChargeSession,
     ChargeStats,
     ConnectorState,
     LimitMemory,
+    MeterSample,
 )
 from .readings import PRIMARY_CONNECTOR
 
@@ -193,6 +196,17 @@ def _text(value: object) -> str | None:
 
 
 # A number the charger sent as a finite float; None when it is missing, not a number, too large or not finite.
+# The context of the energy reading of a MeterValues payload (Sample.Periodic, Sample.Clock, ...), for the log.
+def _energy_context(payload: dict[str, Any]) -> str:
+    for entry in payload.get("meterValue", []):
+        for sampled in entry.get("sampledValue", []) if isinstance(entry, dict) else []:
+            if isinstance(sampled, dict) and sampled.get("measurand", "Energy.Active.Import.Register").startswith(
+                "Energy.Active.Import"
+            ):
+                return str(sampled.get("context", "Sample.Periodic"))
+    return "unknown"
+
+
 # float() raises OverflowError on a huge integer, and JSON allows Infinity and NaN, so none of that may reach the
 # energy arithmetic or a sensor state.
 def _finite(value: object) -> float | None:
@@ -220,6 +234,7 @@ class ChargerSession:
         clock: Callable[[], datetime] | None = None,
         resume: Mapping[int, ConnectorState] | None = None,
         limit: LimitMemory | None = None,
+        register: ChargeMemory | None = None,
     ) -> None:
         self._connection = connection
         self._listener = listener
@@ -241,6 +256,12 @@ class ChargerSession:
         self._snapshot = ChargerSnapshot(
             cp_id=cp_id, connected=True, protocol=protocol, last_seen=self._clock(), connectors=dict(resume or {})
         )
+        # The register of the previous connection is shown at once; one read from storage only guards against
+        # readings that go back, because it may be a little behind what the sensor showed before the restart.
+        energy = register or ChargeMemory()
+        self._register_floor_wh = energy.register_wh
+        if not energy.restored:
+            self._snapshot = replace(self._snapshot, register_wh=energy.register_wh)
         remembered = limit or LimitMemory()
         self._snapshot = replace(
             self._snapshot,
@@ -558,8 +579,33 @@ class ChargerSession:
         running = self._running_connector(payload)
         if running is not None:
             connectors[running.connector_id] = replace(running, stats=running.stats.add(sample))
-        self._update(meter=merge_samples(self._snapshot.meter, sample), connectors=connectors)
+        register = self._next_register(sample, running, payload)
+        self._update(meter=merge_samples(self._snapshot.meter, sample), connectors=connectors, register_wh=register)
         return {}
+
+    # The absolute register after one reading; a reading that would make it go back is logged and left out.
+    def _next_register(
+        self, sample: MeterSample, running: ConnectorState | None, payload: dict[str, Any]
+    ) -> float | None:
+        if sample.energy_wh is None:
+            return self._snapshot.register_wh
+        start = running.register_start_wh if running is not None else None
+        current = self._snapshot.register_wh if self._snapshot.register_wh is not None else self._register_floor_wh
+        step = next_register(current, sample.energy_wh, start)
+        if not step.accepted:
+            _LOGGER.debug(
+                "Charger %s: energy reading %.1f Wh (read as %s, %.1f Wh absolute, context %s, transaction %s) "
+                "is below the register %.1f Wh; not taken",
+                self.cp_id,
+                sample.energy_wh,
+                step.kind,
+                step.absolute_wh,
+                _energy_context(payload),
+                payload.get("transactionId"),
+                step.register_wh,
+            )
+            return self._snapshot.register_wh
+        return step.register_wh
 
     # The connector a meter reading belongs to: the one it names, or the only one with a charge running.
     def _running_connector(self, payload: dict[str, Any]) -> ConnectorState | None:
@@ -586,12 +632,24 @@ class ChargerSession:
             )
             self._listener.on_session_finished(interrupted)
         transaction_id = self._next_transaction_id()
+        meter_start = _finite(payload.get("meterStart"))
+        known = self._snapshot.register_wh if self._snapshot.register_wh is not None else self._register_floor_wh
+        register_start = charge_start_register(meter_start, known)
+        _LOGGER.info(
+            "Charger %s: transaction %s started on connector %s, meterStart %s Wh, register at start %s Wh",
+            self.cp_id,
+            transaction_id,
+            connector_id,
+            meter_start,
+            register_start,
+        )
         self._update_connector(
             replace(
                 connector,
                 transaction_id=transaction_id,
                 id_tag=_text(payload.get("idTag")),
-                meter_start_wh=_finite(payload.get("meterStart")),
+                meter_start_wh=meter_start,
+                register_start_wh=register_start,
                 started_at=started_at,
                 stats=ChargeStats(),
             )
@@ -612,6 +670,7 @@ class ChargerSession:
                         transaction_id=None,
                         id_tag=None,
                         meter_start_wh=None,
+                        register_start_wh=None,
                         started_at=None,
                         stats=ChargeStats(),
                     )
@@ -634,11 +693,22 @@ class ChargerSession:
     ) -> ChargeSession:
         ended_at = parse_timestamp(payload.get("timestamp"), self._clock())
         meter_stop = _finite(payload.get("meterStop"))
-        last = self._snapshot.meter.energy_wh if self._snapshot.meter is not None else None
-        end_reading = meter_stop if meter_stop is not None else last
-        start_reading = connector.meter_start_wh
+        start_reading = connector.register_start_wh
+        # meterStop counts from the start on a charger that sent meterStart 0, like the periodic samples.
+        end_reading = (
+            as_absolute(meter_stop, start_reading)[0] if meter_stop is not None else self._snapshot.register_wh
+        )
         energy = (
             max(end_reading - start_reading, 0.0) if start_reading is not None and end_reading is not None else None
+        )
+        _LOGGER.info(
+            "Charger %s: transaction %s ended, meterStop %s Wh, register %s -> %s Wh, energy %s Wh",
+            self.cp_id,
+            transaction_id,
+            meter_stop,
+            start_reading,
+            end_reading,
+            energy,
         )
         return ChargeSession(
             cp_id=self.cp_id,

@@ -16,7 +16,8 @@ def _snapshot(status: str | None = "Charging", **meter: Any) -> ChargerSnapshot:
     if status is not None:
         connectors[1] = ConnectorState(1, status)
     sample = MeterSample(datetime(2026, 10, 20, tzinfo=UTC), **meter) if meter else None
-    return ChargerSnapshot("TEST0001", connectors=connectors, meter=sample)
+    register = sample.energy_wh if sample is not None else None
+    return ChargerSnapshot("TEST0001", connectors=connectors, meter=sample, register_wh=register)
 
 
 # Intent: every OCPP 1.6 connector status maps to its own stable key, and anything else shows as no state.

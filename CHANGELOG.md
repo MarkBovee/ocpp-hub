@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the energy sensor (`sensor.ocpp_hub_<id>_energy`) is the charger's absolute register and never goes back. The Raedian NEO sends its periodic samples during a charge counted from the start of the charge (with `meterStart` 0) and the real register only at every quarter, so the sensor jumped by the whole register four times an hour and Home Assistant's long-term statistics grew by hundreds of kWh per hour. A reading below the register at the start of the running charge is now read as energy since that start, and a reading that would still make the register go back is left out and logged at debug level with its context.
+- Fix: the current-session sensor is the register minus the register at the start of the charge, so it starts at 0 instead of showing the whole register for the first seconds.
+- Fix: a charge that is running while Home Assistant restarts is kept in storage (`ocpp_hub.charges`), so its StopTransaction after the restart still reaches the history and `_last_session`. Before, the stop was ignored and the charge was lost.
+
 ## 0.2.1
 
 First public release. The same as 0.2.0, whose release job did not run.

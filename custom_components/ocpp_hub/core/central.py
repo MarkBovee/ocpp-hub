@@ -15,7 +15,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from . import commands
 from .control import ChargerControl, ControlPolicy
 from .frames import Frame
-from .model import ChargerSnapshot, ChargeSession, ConnectorState, LimitMemory
+from .model import ChargeMemory, ChargerSnapshot, ChargeSession, ConnectorState, LimitMemory
 from .session import ChargerSession, SessionListener, SessionSettings
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +48,8 @@ class CentralSystem:
         self._transaction_counter = int(time.time()) % 2**31
         # The charges that were running when a charger's connection ended, until the charger comes back.
         self._open_charges: dict[str, dict[int, ConnectorState]] = {}
+        # The last absolute energy register of each charger whose connection ended, or that storage remembered.
+        self._registers: dict[str, ChargeMemory] = {}
         # The limit the hub set on a charger, as (amps, purpose), until the charger comes back. A station profile stays
         # in the charger when the link drops, so it must stay visible; a charge profile ends with its charge.
         self._limits: dict[str, LimitMemory] = {}
@@ -136,6 +138,15 @@ class CentralSystem:
             }
         )
 
+    # Seed the running charges and energy registers from storage after a restart, so a charge that started before it
+    # still finds its start when it stops, and the energy register cannot go back.
+    def restore_charges(self, charges: dict[str, ChargeMemory]) -> None:
+        for cp_id, memory in charges.items():
+            if memory.charges:
+                self._open_charges[cp_id] = dict(memory.charges)
+            if memory.register_wh is not None:
+                self._registers[cp_id] = replace(memory, charges={}, restored=True)
+
     # The limit that is remembered for a charger, for storage.
     def limit_memory(self, cp_id: str) -> LimitMemory:
         return self._limits.get(cp_id, LimitMemory())
@@ -159,6 +170,11 @@ class CentralSystem:
         # would bring a finished charge back as a ghost.
         remembered = self._open_charges.pop(cp_id, {})
         resume = (_running_connectors(previous.snapshot) if previous is not None else None) or remembered
+        register = (
+            ChargeMemory(register_wh=previous.snapshot.register_wh)
+            if previous is not None and previous.snapshot.register_wh is not None
+            else self._registers.get(cp_id)
+        )
         session = ChargerSession(
             cp_id,
             protocol,
@@ -169,6 +185,7 @@ class CentralSystem:
             self._clock,
             resume,
             self._limits.get(cp_id),
+            register,
         )
         self._sessions[cp_id] = session
         _LOGGER.info("Charger %s connected (%s)", cp_id, protocol)
@@ -178,6 +195,8 @@ class CentralSystem:
             if self._sessions.get(cp_id) is session:
                 del self._sessions[cp_id]
                 self._remember_limit(cp_id, session.snapshot)
+                if session.snapshot.register_wh is not None:
+                    self._registers[cp_id] = ChargeMemory(register_wh=session.snapshot.register_wh)
                 running = _running_connectors(session.snapshot)
                 if running:
                     self._open_charges[cp_id] = running

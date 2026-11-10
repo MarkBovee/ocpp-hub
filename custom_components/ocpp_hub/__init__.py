@@ -42,7 +42,7 @@ from .core.schedule_plan import SchedulePlanError
 from .plan_sync import PlanSync
 from .runtime import HubListener, HubRuntime, OcppHubConfigEntry
 from .schedule_helper import WEEKDAYS
-from .session_store import LimitStore, PlanStore, SessionStore
+from .session_store import ChargeStore, LimitStore, PlanStore, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -221,6 +221,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
     await sessions.async_load()
     limits = LimitStore(hass)
     stored_limits = await limits.async_load()
+    charges = ChargeStore(hass)
+    stored_charges = await charges.async_load()
     policy = _control_policy(entry)
     plan_store = PlanStore(hass)
     await plan_store.async_load()
@@ -230,6 +232,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
         await mirror.start()
     central = CentralSystem([], policy=policy)
     central.restore_limits(stored_limits)
+    central.restore_charges(stored_charges)
     plans.bind(central)
     listener = HubListener(
         hass,
@@ -239,6 +242,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
         limits,
         plans.snapshot_changed,
         mirror_enabled=settings is not None,
+        charges=charges,
     )
     central.add_listeners([listener, *([mirror] if mirror is not None else [])])
     port = entry.data[CONF_PORT]
@@ -249,7 +253,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> b
             await mirror.stop()
         raise ConfigEntryNotReady(f"cannot listen on port {port}: {error}") from error
     try:
-        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits, plans)
+        entry.runtime_data = HubRuntime(central, listener, mirror, sessions, limits, plans, charges)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         # Home Assistant never unloads an entry whose setup failed or was cancelled, so nothing else would close the
@@ -288,5 +292,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: OcppHubConfigEntry) -> 
         finally:
             await entry.runtime_data.sessions.async_flush()
             await entry.runtime_data.limits.async_flush()
+            await entry.runtime_data.charges.async_flush()
             await entry.runtime_data.plans.async_flush()
     return unloaded
