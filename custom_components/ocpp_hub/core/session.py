@@ -195,7 +195,6 @@ def _text(value: object) -> str | None:
     return value[:MAX_TEXT] if isinstance(value, str) and value else None
 
 
-# A number the charger sent as a finite float; None when it is missing, not a number, too large or not finite.
 # The context of the energy reading of a MeterValues payload (Sample.Periodic, Sample.Clock, ...), for the log.
 def _energy_context(payload: dict[str, Any]) -> str:
     for entry in payload.get("meterValue", []):
@@ -207,6 +206,7 @@ def _energy_context(payload: dict[str, Any]) -> str:
     return "unknown"
 
 
+# A number the charger sent as a finite float; None when it is missing, not a number, too large or not finite.
 # float() raises OverflowError on a huge integer, and JSON allows Infinity and NaN, so none of that may reach the
 # energy arithmetic or a sensor state.
 def _finite(value: object) -> float | None:
