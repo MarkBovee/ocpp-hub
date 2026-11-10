@@ -220,13 +220,15 @@ def _same_charges(saved: ChargeMemory, current: ChargeMemory) -> bool:
     }
 
 
-# True when the register moved enough since it was saved, or became known.
+# True when the register moved enough since it was saved, or became known. Without a running charge any move counts:
+# the register is then shown straight from storage after a restart, so it must be exact.
 def _register_moved(saved: ChargeMemory, current: ChargeMemory) -> bool:
     if current.register_wh is None:
         return False
     if saved.register_wh is None:
         return True
-    return abs(current.register_wh - saved.register_wh) >= _REGISTER_SAVE_STEP_WH
+    moved = abs(current.register_wh - saved.register_wh)
+    return moved >= _REGISTER_SAVE_STEP_WH if current.charges else moved > 0
 
 
 @dataclass
