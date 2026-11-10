@@ -256,6 +256,16 @@
           "description": "A list of windows, each with a day (monday to sunday), a start (from) and an end (to) time."
         }
       }
+    },
+    "reset_energy_register": {
+      "name": "Reset energy register",
+      "description": "Forgets the energy register the hub keeps for a charger, so the energy sensor follows the charger's meter again. Use it only after the meter was replaced or reset: the hub never lets the register go back on its own. Nothing is written to the charger.",
+      "fields": {
+        "charger_id": {
+          "name": "Charger ID",
+          "description": "The charger whose register to forget. Leave empty when there is only one."
+        }
+      }
     }
   },
   "selector": {

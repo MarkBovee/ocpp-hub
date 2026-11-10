@@ -256,6 +256,16 @@
           "description": "Een lijst vensters, elk met een dag (monday tot sunday), een begin (from) en een eind (to)."
         }
       }
+    },
+    "reset_energy_register": {
+      "name": "Energieregister resetten",
+      "description": "Vergeet het energieregister dat de hub voor een lader bijhoudt, zodat de energiesensor de meter van de lader weer volgt. Gebruik dit alleen nadat de meter is vervangen of gereset: zelf laat de hub het register nooit teruglopen. Er wordt niets naar de lader geschreven.",
+      "fields": {
+        "charger_id": {
+          "name": "Lader-ID",
+          "description": "De lader waarvan het register wordt vergeten. Laat leeg als er maar één is."
+        }
+      }
     }
   },
   "selector": {

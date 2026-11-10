@@ -14,7 +14,7 @@ from typing import Any, Protocol
 from websockets.exceptions import ConnectionClosed
 
 from . import commands
-from .energy_register import as_absolute, charge_start_register, next_register
+from .energy_register import as_absolute, charge_start_register, next_register, rebased_start
 from .frames import (
     ERROR_FORMATION_VIOLATION,
     ERROR_INTERNAL,
@@ -43,6 +43,8 @@ from .model import (
 from .readings import PRIMARY_CONNECTOR
 
 _LOGGER = logging.getLogger(__name__)
+# The context of a clock-aligned meter reading; such a reading is always the absolute register.
+CONTEXT_CLOCK = "Sample.Clock"
 
 # Who sent a frame, as the listeners see it.
 SENDER_CHARGER = "CP"
@@ -195,6 +197,24 @@ def _text(value: object) -> str | None:
     return value[:MAX_TEXT] if isinstance(value, str) and value else None
 
 
+# The energy of a finished charge. With its start register known, the stop reading (meterStop, read like the periodic
+# samples) or else the register minus that start; with the start unknown (meterStart 0 and no register yet), every
+# reading counted from the start, so meterStop or the last reading minus meterStart is the energy. None when nothing
+# usable is there; never negative.
+def _charge_energy(
+    connector: ConnectorState, meter_stop: float | None, register_wh: float | None, last_reading_wh: float
+) -> float | None:
+    start = connector.register_start_wh
+    if start is not None:
+        end = as_absolute(meter_stop, start)[0] if meter_stop is not None else register_wh
+        if end is None and last_reading_wh:
+            # The register is hidden after a restart until a fresh reading; the last reading still says how far it got.
+            end = as_absolute(last_reading_wh, start)[0]
+        return max(end - start, 0.0) if end is not None else None
+    since_start = meter_stop if meter_stop is not None else (last_reading_wh or None)
+    return max(since_start - (connector.meter_start_wh or 0.0), 0.0) if since_start is not None else None
+
+
 # The context of the energy reading of a MeterValues payload (Sample.Periodic, Sample.Clock, ...), for the log.
 def _energy_context(payload: dict[str, Any]) -> str:
     for entry in payload.get("meterValue", []):
@@ -295,6 +315,13 @@ class ChargerSession:
     def snapshot(self) -> ChargerSnapshot:
         """The latest state of the charger."""
         return self._snapshot
+
+    # Forget the energy register, so the next reading is taken as it is: after the meter of the charger was replaced
+    # or reset, the old register would otherwise hold every new reading back for ever.
+    def reset_register(self) -> None:
+        _LOGGER.info("Charger %s: energy register %s Wh forgotten on request", self.cp_id, self._known_register())
+        self._register_floor_wh = None
+        self._update(register_wh=None)
 
     # Read frames until the connection ends, then mark the charger as gone.
     # The listener is told on every exit path, so a crashed session can never leave a charger shown as connected.
@@ -577,21 +604,45 @@ class ChargerSession:
             return {}
         connectors = dict(self._snapshot.connectors)
         running = self._running_connector(payload)
+        register, running = self._next_register(sample, running, payload)
         if running is not None:
             connectors[running.connector_id] = replace(running, stats=running.stats.add(sample))
-        register = self._next_register(sample, running, payload)
         self._update(meter=merge_samples(self._snapshot.meter, sample), connectors=connectors, register_wh=register)
         return {}
 
-    # The absolute register after one reading; a reading that would make it go back is logged and left out.
+    # The absolute register after one reading, and the running charge with its start once that is known. A reading
+    # that would make the register go back is logged and left out. A charge whose start is unknown takes its start from
+    # the first clock-aligned reading; until then its readings, which count from the start, do not touch the register.
     def _next_register(
         self, sample: MeterSample, running: ConnectorState | None, payload: dict[str, Any]
-    ) -> float | None:
+    ) -> tuple[float | None, ConnectorState | None]:
         if sample.energy_wh is None:
-            return self._snapshot.register_wh
+            return self._snapshot.register_wh, running
+        context = _energy_context(payload)
+        clock = context == CONTEXT_CLOCK
+        if running is not None and running.register_start_wh is None:
+            if not clock:
+                _LOGGER.debug(
+                    "Charger %s: energy reading %.1f Wh (context %s) of transaction %s waits for the register at the "
+                    "start of the charge, which comes with the next clock-aligned reading",
+                    self.cp_id,
+                    sample.energy_wh,
+                    context,
+                    running.transaction_id,
+                )
+                return self._snapshot.register_wh, running
+            found = rebased_start(sample.energy_wh, self._energy_since_start(running))
+            _LOGGER.info(
+                "Charger %s: register at the start of transaction %s found from the clock reading %.1f Wh: %.1f Wh",
+                self.cp_id,
+                running.transaction_id,
+                sample.energy_wh,
+                found,
+            )
+            running = replace(running, register_start_wh=found)
         start = running.register_start_wh if running is not None else None
-        current = self._snapshot.register_wh if self._snapshot.register_wh is not None else self._register_floor_wh
-        step = next_register(current, sample.energy_wh, start)
+        current = self._known_register()
+        step = next_register(current, sample.energy_wh, start, clock)
         if not step.accepted:
             _LOGGER.debug(
                 "Charger %s: energy reading %.1f Wh (read as %s, %.1f Wh absolute, context %s, transaction %s) "
@@ -600,12 +651,26 @@ class ChargerSession:
                 sample.energy_wh,
                 step.kind,
                 step.absolute_wh,
-                _energy_context(payload),
+                context,
                 payload.get("transactionId"),
                 step.register_wh,
             )
-            return self._snapshot.register_wh
-        return step.register_wh
+            return self._snapshot.register_wh, running
+        return step.register_wh, running
+
+    # The register as far as it is known: the one shown, or the one from storage that only guards.
+    def _known_register(self) -> float | None:
+        return self._snapshot.register_wh if self._snapshot.register_wh is not None else self._register_floor_wh
+
+    # The last raw energy reading of a running charge, which counts from its start when its start is unknown; 0 when
+    # the charger sent none since the charge started (a reading from before belongs to something else).
+    def _energy_since_start(self, running: ConnectorState) -> float:
+        meter = self._snapshot.meter
+        if meter is None or meter.energy_wh is None:
+            return 0.0
+        if running.started_at is not None and meter.sampled_at < running.started_at:
+            return 0.0
+        return meter.energy_wh
 
     # The connector a meter reading belongs to: the one it names, or the only one with a charge running.
     def _running_connector(self, payload: dict[str, Any]) -> ConnectorState | None:
@@ -633,8 +698,7 @@ class ChargerSession:
             self._listener.on_session_finished(interrupted)
         transaction_id = self._next_transaction_id()
         meter_start = _finite(payload.get("meterStart"))
-        known = self._snapshot.register_wh if self._snapshot.register_wh is not None else self._register_floor_wh
-        register_start = charge_start_register(meter_start, known)
+        register_start = charge_start_register(meter_start, self._snapshot.register_wh, self._register_floor_wh)
         _LOGGER.info(
             "Charger %s: transaction %s started on connector %s, meterStart %s Wh, register at start %s Wh",
             self.cp_id,
@@ -694,13 +758,8 @@ class ChargerSession:
         ended_at = parse_timestamp(payload.get("timestamp"), self._clock())
         meter_stop = _finite(payload.get("meterStop"))
         start_reading = connector.register_start_wh
-        # meterStop counts from the start on a charger that sent meterStart 0, like the periodic samples.
-        end_reading = (
-            as_absolute(meter_stop, start_reading)[0] if meter_stop is not None else self._snapshot.register_wh
-        )
-        energy = (
-            max(end_reading - start_reading, 0.0) if start_reading is not None and end_reading is not None else None
-        )
+        energy = _charge_energy(connector, meter_stop, self._snapshot.register_wh, self._energy_since_start(connector))
+        end_reading = start_reading + energy if start_reading is not None and energy is not None else None
         _LOGGER.info(
             "Charger %s: transaction %s ended, meterStop %s Wh, register %s -> %s Wh, energy %s Wh",
             self.cp_id,

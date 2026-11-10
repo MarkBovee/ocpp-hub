@@ -128,6 +128,12 @@ class ChargeStore:
     def remembered(self, cp_id: str) -> ChargeMemory | None:
         return self._charges.get(cp_id)
 
+    # Forget the stored register of one charger and keep its running charges.
+    def forget_register(self, cp_id: str) -> None:
+        memory = self._charges.get(cp_id)
+        if memory is not None:
+            self.update(cp_id, ChargeMemory(charges=memory.charges))
+
     # Keep the charges of one charger and schedule a save; an empty memory removes the charger.
     def update(self, cp_id: str, memory: ChargeMemory) -> None:
         if memory.empty:

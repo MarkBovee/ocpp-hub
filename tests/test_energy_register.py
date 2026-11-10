@@ -12,6 +12,7 @@ from ocpp_hub_core.energy_register import (
     as_absolute,
     charge_start_register,
     next_register,
+    rebased_start,
 )
 from ocpp_hub_core.model import ChargeMemory
 
@@ -167,3 +168,95 @@ async def test_a_charge_survives_a_restart_through_storage(start_hub) -> None:
     assert hidden_until_read is None
     assert readings.energy_kwh(after.listener.latest) == 146.803
     assert len(after.listener.finished) == 1 and after.listener.finished[0].energy_wh == 40642.0
+
+
+# Intent: a clock-aligned reading is always the register, and on a young charger a relative reading at or above the
+# start register is still read as relative when only that fits the current register.
+# Why: a charge can deliver more than the register held at its start; reading it as absolute froze the register.
+def test_clock_readings_are_absolute_and_young_chargers_stay_relative() -> None:
+    assert as_absolute(500.0, 800.0, 1000.0, clock=True) == (500.0, KIND_ABSOLUTE)
+    assert as_absolute(6800.0, 800.0, 7500.0) == (7600.0, KIND_RELATIVE)
+    assert as_absolute(7600.0, 800.0, 7500.0) == (7600.0, KIND_ABSOLUTE)
+
+
+# Intent: without a known register, meterStart 0 (or one below the stored register) leaves the start unknown, and the
+# start is found from the first clock reading minus the energy counted so far.
+# Why: taking 0 as the start made the session show the whole register and froze the register for the rest of the charge.
+def test_an_unknown_start_is_found_from_the_first_clock_reading() -> None:
+    assert charge_start_register(0.0, None) is None
+    assert charge_start_register(100000.0, None, floor_wh=106803.0) is None
+    assert charge_start_register(107000.0, None, floor_wh=106803.0) == 107000.0
+    assert rebased_start(109012.0, 2209.0) == 106803.0 and rebased_start(10.0, 50.0) == 0.0
+
+
+# Intent: a charge that starts before any register is known shows no register until the first clock reading, then a
+# register that only rises and a session energy counted from the real start, and the finished charge has its energy.
+# Why: the first charge after a fresh install, or after Home Assistant was down, must not break the statistics either.
+async def test_a_charge_without_a_known_register_waits_for_the_clock(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    started = await charger.call(
+        "StartTransaction", {"connectorId": 1, "idTag": "TAG1", "meterStart": 0, "timestamp": "2026-11-09T23:30:20Z"}
+    )
+    tx = started[2]["transactionId"]
+    shown: list[float | None] = []
+    for payload in [
+        _periodic(tx, "2026-11-09T23:30:30Z", 0),
+        _periodic(tx, "2026-11-09T23:44:45Z", 2177),
+        _clock("2026-11-09T23:45:00Z", 108.98),
+        _periodic(tx, "2026-11-09T23:45:15Z", 2217),
+    ]:
+        await charger.call("MeterValues", payload)
+        shown.append(readings.energy_kwh(hub.listener.latest))
+    session = readings.session_energy_kwh(hub.listener.latest)
+    await charger.call(
+        "StopTransaction",
+        {"transactionId": tx, "meterStop": 40642, "timestamp": "2026-11-10T13:06:16Z", "reason": "EVDisconnected"},
+    )
+
+    assert shown == [None, None, 108.98, 109.02] and session == 2.217
+    assert hub.listener.finished[0].energy_wh == 40642.0
+
+
+# Intent: a stop without meterStop after a restart, before the charger sent a reading the register could show, still
+# gets the energy of the charge from the last reading counted from its start.
+# Why: the register is hidden after a restart until a fresh reading; the charge must not lose its energy because of it.
+async def test_a_stop_without_reading_after_a_restart_keeps_its_energy(start_hub) -> None:
+    hub = await start_hub()
+    stored = {
+        "register_wh": 136000.0,
+        "charges": [
+            {
+                "connector_id": 1,
+                "transaction_id": 77,
+                "id_tag": "TAG1",
+                "meter_start_wh": 0,
+                "register_start_wh": 106803.0,
+                "started_at": "2026-11-09T23:30:20+00:00",
+            }
+        ],
+    }
+    hub.central.restore_charges({"TEST0001": ChargeMemory.from_dict(stored)})
+    charger = await hub.charger()
+    # A delayed sample: 106803 + 29000 is just below the stored register, so it is not shown.
+    await charger.call("MeterValues", _periodic(77, "2026-11-10T13:00:00Z", 29000))
+    await charger.call("StopTransaction", {"transactionId": 77, "timestamp": "2026-11-10T13:06:16Z"})
+
+    assert readings.energy_kwh(hub.listener.latest) is None
+    assert hub.listener.finished[0].energy_wh == 29000.0
+
+
+# Intent: after a reset the next reading is taken as it is, even when it is far below the old register.
+# Why: a replaced or reset meter would otherwise hold the energy sensor at the old register for ever.
+async def test_a_reset_lets_a_new_meter_through(start_hub) -> None:
+    hub = await start_hub()
+    charger = await hub.charger()
+    await charger.call("MeterValues", _clock("2026-11-10T13:15:00Z", 147.445))
+    await charger.call("MeterValues", _clock("2026-11-10T13:30:00Z", 0.5))
+    held = readings.energy_kwh(hub.listener.latest)
+    hub.central.reset_register("TEST0001")
+    cleared = readings.energy_kwh(hub.listener.latest)
+    await charger.call("MeterValues", _clock("2026-11-10T13:45:00Z", 0.6))
+
+    assert held == 147.445 and cleared is None
+    assert readings.energy_kwh(hub.listener.latest) == 0.6

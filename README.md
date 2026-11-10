@@ -124,7 +124,11 @@ shows the latest finished charge and the 20 newest in `recent_sessions`.
 
 Every finished charge is kept in Home Assistant's storage without limit (about 300 bytes each). The action
 `ocpp_hub.get_sessions` returns the history, newest first, optionally for one `charger_id` and up to `limit`. A charge
-that was running while Home Assistant restarted is not recorded.
+that is running while Home Assistant restarts is kept in storage too, so its stop after the restart is still recorded.
+
+`_energy` is the charger's absolute meter register and never goes back, so the Energy dashboard can use it. A reading
+that would make it go back is left out and logged at debug level. If the charger's meter is ever replaced or reset,
+the action `ocpp_hub.reset_energy_register` (optionally with `charger_id`) makes the sensor follow the new meter.
 
 ## Schedules and the charging plan
 

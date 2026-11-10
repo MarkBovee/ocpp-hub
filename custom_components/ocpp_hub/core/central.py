@@ -147,6 +147,13 @@ class CentralSystem:
             if memory.register_wh is not None:
                 self._registers[cp_id] = replace(memory, charges={}, restored=True)
 
+    # Forget the energy register of a charger, connected or not; see ChargerSession.reset_register.
+    def reset_register(self, cp_id: str) -> None:
+        self._registers.pop(cp_id, None)
+        session = self._sessions.get(cp_id)
+        if session is not None:
+            session.reset_register()
+
     # The limit that is remembered for a charger, for storage.
     def limit_memory(self, cp_id: str) -> LimitMemory:
         return self._limits.get(cp_id, LimitMemory())

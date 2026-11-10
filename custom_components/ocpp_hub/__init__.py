@@ -29,6 +29,7 @@ from .const import (
     PACKAGE_LOGGER,
     RETIRED_ENTITY_KEYS,
     SERVICE_GET_SESSIONS,
+    SERVICE_RESET_ENERGY_REGISTER,
     SERVICE_SET_PLAN,
     SERVICE_SET_SCHEDULE,
 )
@@ -68,6 +69,9 @@ def _read_build_stamp() -> str:
 GET_SESSIONS_SCHEMA = vol.Schema(
     {vol.Optional("charger_id"): str, vol.Optional("limit"): vol.All(int, vol.Range(min=1))}
 )
+
+
+RESET_ENERGY_REGISTER_SCHEMA = vol.Schema({vol.Optional("charger_id"): str})
 
 
 # A limit from the service call as a float; text, nan or a number too big to be one is refused with a normal error.
@@ -165,7 +169,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"detail": str(error)},
             ) from error
 
+    # Forget the energy register of a charger after its meter was replaced or reset, so the energy sensor follows the
+    # new meter. Home Assistant sees the lower value as a meter reset, which is what happened. Nothing is written to
+    # the charger.
+    async def reset_energy_register(call: ServiceCall) -> None:
+        entries = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not entries:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_hub_loaded")
+        runtime = entries[0].runtime_data
+        announced = runtime.listener.announced
+        cp_id = call.data.get("charger_id") or (announced[0] if len(announced) == 1 else None)
+        if cp_id is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="charger_not_chosen")
+        runtime.listener.reset_register(runtime.central, cp_id)
+
     hass.services.async_register(DOMAIN, SERVICE_SET_SCHEDULE, set_schedule, schema=SET_SCHEDULE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESET_ENERGY_REGISTER, reset_energy_register, schema=RESET_ENERGY_REGISTER_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_SET_PLAN, set_plan, schema=SET_PLAN_SCHEMA)
     return True
 

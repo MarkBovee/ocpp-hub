@@ -146,3 +146,27 @@ async def test_a_charge_running_through_a_reload_reaches_the_last_session(
 
     await wait_for(hass, lambda: state_of(hass, LAST_SESSION) == "2026-10-21T09:00:00+00:00", "stop lost on reload")
     assert hass.states.get(LAST_SESSION).attributes["energy_kwh"] == 4.0
+
+
+# Intent: the reset service makes the energy sensor follow a meter that starts again from a low value, which it would
+# otherwise hold back as a reading that goes back.
+# Why: after a meter replacement the owner needs a way out; without it the sensor would stay on the old register.
+async def test_the_reset_service_lets_a_new_meter_through(
+    hass: HomeAssistant, setup_hub: Callable[..., Awaitable[MockConfigEntry]], connect_charger: Any
+) -> None:
+    energy = "sensor.ocpp_hub_test0001_energy"
+    entry = await setup_hub()
+    charger = await connect_charger(entry)
+    await charger.boot()
+    await wait_for(hass, lambda: state_of(hass, LAST_SESSION) is not None, "no entities")
+    await charger.call("MeterValues", _meter("2026-10-21T08:00:00Z", 147445, 0))
+    await wait_for(hass, lambda: state_of(hass, energy) == "147.445", "register not shown")
+    await charger.call("MeterValues", _meter("2026-10-21T08:15:00Z", 500, 0))
+    await hass.async_block_till_done()
+    held = state_of(hass, energy)
+
+    await hass.services.async_call(DOMAIN, "reset_energy_register", {}, blocking=True)
+    await charger.call("MeterValues", _meter("2026-10-21T08:30:00Z", 600, 0))
+
+    await wait_for(hass, lambda: state_of(hass, energy) == "0.6", "new meter not followed")
+    assert held == "147.445"

@@ -155,6 +155,16 @@ class HubListener:
         self._saved_charges[snapshot.cp_id] = current
         self._charges.update(snapshot.cp_id, current)
 
+    # Forget the register of a charger everywhere it is kept: in storage, in what was last saved, and in the engine.
+    # Storage goes first, so the snapshot without a register that follows cannot bring the old one back.
+    def reset_register(self, central: CentralSystem, cp_id: str) -> None:
+        if self._charges is not None:
+            self._charges.forget_register(cp_id)
+        saved = self._saved_charges.pop(cp_id, None)
+        if saved is not None:
+            self._saved_charges[cp_id] = ChargeMemory(charges=saved.charges)
+        central.reset_register(cp_id)
+
     # Tell the owner that a charger connected: who it is and what it speaks, in the language of the instance.
     # The notification has a fixed id per charger, so a reconnect updates it instead of piling up new ones.
     async def _notify_connected(self, snapshot: ChargerSnapshot) -> None:
