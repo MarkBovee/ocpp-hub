@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Energy that Home Assistant can trust, and charges that survive a restart.
+
+Seen on the real charger (Raedian NEO 22T, firmware 2.0.5_134) with this build: it connects and boots, the vendor mirror connects, and the energy sensor showed 147.445 kWh and did not jump at the next quarter. A full charge with this build has not been seen yet. The charge limit code did not change, so setting and clearing a limit was not tested again.
+
+If your energy statistics already grew by hundreds of kWh per hour, the code change does not repair them. Fix the affected hours in Developer tools → Statistics, or use the websocket command `recorder/adjust_sum_statistics`.
 
 - Fix: the energy sensor (`sensor.ocpp_hub_<id>_energy`) is the charger's absolute register and never goes back. The Raedian NEO sends its periodic samples during a charge counted from the start of the charge (with `meterStart` 0) and the real register only at every quarter, so the sensor jumped by the whole register four times an hour and Home Assistant's long-term statistics grew by hundreds of kWh per hour. A reading below the register at the start of the running charge is now read as energy since that start, and a reading that would still make the register go back is left out and logged at debug level with its context.
 - Fix: the current-session sensor is the register minus the register at the start of the charge, so it starts at 0 instead of showing the whole register for the first seconds.
 - A charge that starts before any register is known (a first connection, or after Home Assistant was down) takes its start register from the first clock-aligned reading; until then its readings do not touch the energy sensor. A relative reading above the start register (a young charger) is still read as relative, and a stop without `meterStop` right after a restart keeps its energy.
+- After a restart of Home Assistant with no charge running, the energy sensor shows the stored register at once, so the Energy dashboard does not report it as unavailable. With a charge running it waits for the charger's next reading, because the stored register may be a little behind.
 - New action `ocpp_hub.reset_energy_register` forgets the register the hub keeps, for after a meter was replaced or reset. Nothing is written to the charger.
 - Fix: a charge that is running while Home Assistant restarts is kept in storage (`ocpp_hub.charges`), so its StopTransaction after the restart still reaches the history and `_last_session`. Before, the stop was ignored and the charge was lost.
 

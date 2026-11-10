@@ -139,13 +139,16 @@ class CentralSystem:
         )
 
     # Seed the running charges and energy registers from storage after a restart, so a charge that started before it
-    # still finds its start when it stops, and the energy register cannot go back.
+    # still finds its start when it stops, and the energy register cannot go back. An idle charger's register shows at
+    # once, so the Energy dashboard sees no gap after a restart.
     def restore_charges(self, charges: dict[str, ChargeMemory]) -> None:
         for cp_id, memory in charges.items():
             if memory.charges:
                 self._open_charges[cp_id] = dict(memory.charges)
             if memory.register_wh is not None:
-                self._registers[cp_id] = replace(memory, charges={}, restored=True)
+                # Without a running charge the register did not move after it was saved, so it is exact and shown at
+                # once; with one it may be a little behind and only guards until the charger sends a reading.
+                self._registers[cp_id] = replace(memory, charges={}, restored=bool(memory.charges))
 
     # Forget the energy register of a charger, connected or not; see ChargerSession.reset_register.
     def reset_register(self, cp_id: str) -> None:

@@ -260,3 +260,16 @@ async def test_a_reset_lets_a_new_meter_through(start_hub) -> None:
 
     assert held == 147.445 and cleared is None
     assert readings.energy_kwh(hub.listener.latest) == 0.6
+
+
+# Intent: after a restart with no charge running, the stored register shows at once instead of waiting for a reading.
+# Why: an unknown energy sensor after every restart made the Energy dashboard report the entity as not available.
+async def test_an_idle_register_shows_at_once_after_a_restart(start_hub) -> None:
+    hub = await start_hub()
+    hub.central.restore_charges({"TEST0001": ChargeMemory.from_dict({"register_wh": 147445.0, "charges": []})})
+    charger = await hub.charger()
+    shown = readings.energy_kwh(hub.listener.latest)
+    await charger.call("MeterValues", _clock("2026-11-10T21:15:00Z", 40.642))
+
+    assert shown == 147.445
+    assert readings.energy_kwh(hub.listener.latest) == 147.445
